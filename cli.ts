@@ -168,7 +168,7 @@ async function cmdTest(channel?: string) {
     allChannels.push([name, enabled, sender])
   }
 
-  add("system", !!(channels.system?.enabled), async () => {
+  add("system_message", !!(channels.system_message?.enabled), async () => {
     await new SystemSender().send(SAMPLE_MSG)
   })
 
@@ -291,7 +291,8 @@ function cmdInfo() {
 
     console.log(`\n  🔔 通知渠道:`)
     const channelNames: [string, any, string][] = [
-      ["系统通知", ch.system, ""],
+      ["系统消息", ch.system_message, ""],
+      ["屏幕跑马灯", ch.screen_flash, ch.screen_flash?.enabled ? `强度${ch.screen_flash.intensity ?? 0.9}` : ""],
       ["自定义 Webhook", ch.custom_webhook, ch.custom_webhook?.url ?? ""],
       ["企业微信", ch.wechat_work, ch.wechat_work?.webhook_url ? `${ch.wechat_work.webhook_url.slice(0, 40)}...` : ""],
       ["飞书", ch.feishu, ch.feishu?.webhook_url ? `${ch.feishu.webhook_url.slice(0, 40)}...` : ""],

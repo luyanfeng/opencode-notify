@@ -5,6 +5,7 @@ import { route } from "./events.js"
 import { Dispatcher } from "./dispatcher.js"
 import { FileStore } from "./store.js"
 import { SystemSender } from "./senders/system.js"
+import { ScreenFlashSender } from "./senders/screen-flash.js"
 import { CustomWebhookSender } from "./senders/custom-webhook.js"
 import { WechatWorkSender } from "./senders/wechat-work.js"
 import { FeishuSender } from "./senders/feishu.js"
@@ -110,15 +111,13 @@ function buildSenders(cfg: PluginConfig) {
   const senders: import("./senders/types.js").Sender[] = []
   const globalEvents = cfg.events ?? []
 
-  if (cfg.channels?.system?.enabled) {
-    const flashCfg = cfg.channels.system.screen_flash as
-      | import("./config.js").ScreenFlashConfig
-      | undefined
-    const scriptPath =
-      flashCfg && process.platform === "linux" ? MARQUEE_SCRIPT : undefined
-    const events = cfg.channels.system.events ?? globalEvents
-    addSender(senders, new SystemSender(flashCfg, scriptPath), events, "系统通知",
-      flashCfg ? "跑马灯已启用" : undefined)
+  if (cfg.channels?.system_message?.enabled) {
+    const events = cfg.channels.system_message.events ?? globalEvents
+    addSender(senders, new SystemSender(), events, "系统通知")
+  }
+  if (cfg.channels?.screen_flash?.enabled) {
+    const events = cfg.channels.screen_flash.events ?? globalEvents
+    addSender(senders, new ScreenFlashSender(cfg.channels.screen_flash), events, "屏幕跑马灯")
   }
   if (cfg.channels?.custom_webhook?.enabled && cfg.channels.custom_webhook.url) {
     const events = cfg.channels.custom_webhook.events ?? globalEvents

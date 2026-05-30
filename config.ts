@@ -8,25 +8,17 @@ export interface ChannelConfig {
   events?: string[]
 }
 
-/** 屏幕跑马灯配置 */
-export interface ScreenFlashConfig {
-  enabled: boolean
+/** 系统消息通知配置 */
+export interface SystemMessageChannelConfig extends ChannelConfig {}
+
+/** 屏幕跑马灯渠道配置 */
+export interface ScreenFlashChannelConfig extends ChannelConfig {
   /** 持续秒数，默认 3.0 */
   duration?: number
   /** 移动速度因子，默认 4.0 */
   speed?: number
   /** 不透明度 0.0–1.0，默认 0.9 */
   intensity?: number
-}
-
-/** 系统通知配置 */
-export interface SystemChannelConfig extends ChannelConfig {
-  /**
-   * 屏幕跑马灯 — 通知时屏幕四边高亮闪烁
-   * - boolean: true 启用（使用默认参数）
-   * - object: 自定义参数
-   */
-  screen_flash?: boolean | ScreenFlashConfig
 }
 
 /** 企业微信通知配置 */
@@ -50,7 +42,8 @@ export interface CustomWebhookChannelConfig extends ChannelConfig {
 
 /** 渠道配置集合 */
 export interface ChannelsConfig {
-  system?: SystemChannelConfig
+  system_message?: SystemMessageChannelConfig
+  screen_flash?: ScreenFlashChannelConfig
   wechat_work?: WechatWorkChannelConfig
   feishu?: FeishuChannelConfig
   custom_webhook?: CustomWebhookChannelConfig
@@ -118,7 +111,8 @@ export function mergeConfig(base: PluginConfig, overrides: PluginConfig): Plugin
     channels: {
       ...(base.channels ?? {}),
       ...(overrides.channels ?? {}),
-      system: { ...(base.channels?.system ?? {}), ...(overrides.channels?.system ?? {}) } as any,
+      system_message: { ...(base.channels?.system_message ?? {}), ...(overrides.channels?.system_message ?? {}) } as any,
+      screen_flash: { ...(base.channels?.screen_flash ?? {}), ...(overrides.channels?.screen_flash ?? {}) } as any,
       wechat_work: { ...(base.channels?.wechat_work ?? {}), ...(overrides.channels?.wechat_work ?? {}) } as any,
       feishu: { ...(base.channels?.feishu ?? {}), ...(overrides.channels?.feishu ?? {}) } as any,
       custom_webhook: { ...(base.channels?.custom_webhook ?? {}), ...(overrides.channels?.custom_webhook ?? {}) } as any,
@@ -129,7 +123,8 @@ export function mergeConfig(base: PluginConfig, overrides: PluginConfig): Plugin
 /** 默认配置 */
 const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "activity_timeout_ms" | "debug_log">> & PluginConfig = {
   channels: {
-    system: { enabled: true },
+    system_message: { enabled: true },
+    screen_flash: { enabled: false },
     wechat_work: { enabled: false },
     feishu: { enabled: false },
     custom_webhook: { enabled: false },
@@ -162,24 +157,6 @@ export function resolveConfig(options: PluginConfig): PluginConfig {
     options.channels?.custom_webhook?.url ||
     process.env.OPENCODE_NOTIFY_CUSTOM_WEBHOOK_URL
 
-  // 解析 screen_flash
-  const rawFlash = options.channels?.system?.screen_flash
-  let screenFlash: ScreenFlashConfig | undefined
-  if (rawFlash === true) {
-    screenFlash = { enabled: true }
-  } else if (typeof rawFlash === "object" && rawFlash !== null) {
-    screenFlash = {
-      enabled: rawFlash.enabled,
-      duration: rawFlash.duration,
-      speed: rawFlash.speed,
-      intensity: rawFlash.intensity,
-    }
-  } else if (rawFlash === false || rawFlash === undefined) {
-    screenFlash = undefined
-  } else {
-    screenFlash = undefined
-  }
-
   // 全局 events，各渠道继承此值
   const globalEvents = options.events ?? DEFAULT_CONFIG.events
 
@@ -190,12 +167,20 @@ export function resolveConfig(options: PluginConfig): PluginConfig {
 
   return {
     channels: {
-      system: {
+      system_message: {
         enabled:
-          options.channels?.system?.enabled ??
-          DEFAULT_CONFIG.channels!.system!.enabled,
-        screen_flash: screenFlash,
-        events: chEvents(options.channels?.system),
+          options.channels?.system_message?.enabled ??
+          DEFAULT_CONFIG.channels!.system_message!.enabled,
+        events: chEvents(options.channels?.system_message),
+      },
+      screen_flash: {
+        enabled:
+          options.channels?.screen_flash?.enabled ??
+          DEFAULT_CONFIG.channels!.screen_flash!.enabled,
+        duration: options.channels?.screen_flash?.duration,
+        speed: options.channels?.screen_flash?.speed,
+        intensity: options.channels?.screen_flash?.intensity,
+        events: chEvents(options.channels?.screen_flash),
       },
       wechat_work: {
         enabled:

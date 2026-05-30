@@ -36,7 +36,7 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 | 插件核心（事件监听/路由/分发） | ✅ | ✅ | ✅ |
 | 自定义 Webhook / 企业微信 / 飞书 | ✅ | ✅ | ✅ |
 | 诊断 CLI (`bun cli.ts`) | ✅ | ✅ | ✅ |
-| **系统通知** | ✅ `osascript` 内置 | ⚠️ 需 `libnotify` 包 | ⚠️ 需 BurntToast 模块 |
+| **系统消息通知** | ✅ `osascript` 内置 | ⚠️ 需 `libnotify` 包 | ⚠️ 需 BurntToast 模块 |
 | **屏幕跑马灯** | ❌ | ✅ Python+GTK 内置 | ❌ |
 
 **说明：**
@@ -68,14 +68,15 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 
 ```yaml
 channels:
-  system:
+  system_message:
     enabled: true
     # events: [permission_required, input_required]   # 可选，不填继承全局
-    screen_flash:
-      enabled: true
-      duration: 3.5
-      speed: 5.0
-      intensity: 0.85
+
+  screen_flash:
+    enabled: true
+    duration: 3.5
+    speed: 5.0
+    intensity: 0.85
 
   custom_webhook:
     enabled: false
@@ -124,7 +125,7 @@ custom_webhook:
     - run_failed
 ```
 
-### 系统通知
+### 系统消息通知
 
 弹出操作系统原生通知横幅。
 
@@ -134,29 +135,25 @@ custom_webhook:
 | Linux | `notify-send`（需安装 `libnotify`） |
 | Windows | PowerShell (New-BurntToastNotification) |
 
-#### 屏幕跑马灯（Linux X11 专用）
+### 屏幕跑马灯
 
 通知时在屏幕四边生成彩色高亮闪烁效果（跑马灯），视觉上更醒目：
 
 ![跑马灯效果](doc/de.png)
 
+- 独立渠道，可与系统通知分开启停、分开配置事件过滤
 - 使用 Python + PyGObject(GTK 3) 创建透明覆盖窗口，不干扰当前操作
 - 60fps 动画，彩色灯光沿四边循环运动（红→橙→黄→绿→蓝）
 - 非阻塞执行，不影响通知发送速度
-- 依赖 python3 + PyGObject，Ubuntu GNOME 桌面内置，无需额外安装
+- 仅 Linux X11 环境，Ubuntu GNOME 桌面内置，无需额外安装
 
 ```yaml
-# 简单开关（使用默认参数）
-system:
-  screen_flash: true
-
-# 自定义参数
-system:
-  screen_flash:
-    enabled: true       # 必须
-    duration: 3.0       # 持续秒数（默认 3.0）
-    speed: 4.0          # 移动速度因子（默认 4.0）
-    intensity: 0.9      # 不透明度 0.0~1.0（默认 0.9）
+screen_flash:
+  enabled: true
+  # events: [run_failed]       # 可选，不填继承全局
+  duration: 3.0               # 持续秒数（默认 3.0）
+  speed: 4.0                  # 移动速度因子（默认 4.0）
+  intensity: 0.9              # 不透明度 0.0~1.0（默认 0.9）
 ```
 
 ### 自定义 Webhook
@@ -257,15 +254,17 @@ YAML 文件 > plugin options (opencode.json) > 环境变量 > 默认值
 
 ```yaml
 channels:
-  system:
+  system_message:
     enabled: true              # 系统通知开关
     events: []                 # 可选，渠道级事件过滤（不填继承全局）
                                # 可选值: permission_required | input_required | run_completed | run_failed
-    screen_flash:              # 屏幕跑马灯（仅 Linux X11）
-      enabled: true            #   开启（默认 false）
-      duration: 3.5            #   持续秒数
-      speed: 5.0               #   移动速度因子
-      intensity: 0.85          #   不透明度 0.0~1.0
+  screen_flash:              # 屏幕跑马灯（仅 Linux X11）
+    enabled: true            #   开启（默认 false）
+    events: []               #   可选，渠道级事件过滤（不填继承全局）
+                             #   可选值: permission_required | input_required | run_completed | run_failed
+    duration: 3.5            #   持续秒数
+    speed: 5.0               #   移动速度因子
+    intensity: 0.85          #   不透明度 0.0~1.0
 
   custom_webhook:
     enabled: false             # 自定义 Webhook 开关
@@ -376,6 +375,7 @@ opencode-notify/
 ├── senders/
 │   ├── types.ts             # Sender 接口
 │   ├── system.ts            # 系统通知
+│   ├── screen-flash.ts      # 屏幕跑马灯
 │   ├── custom-webhook.ts    # 自定义 Webhook
 │   ├── wechat-work.ts       # 企业微信
 │   └── feishu.ts            # 飞书
