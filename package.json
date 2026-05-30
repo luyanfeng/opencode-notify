@@ -1,0 +1,21 @@
+{
+  "name": "opencode-notify",
+  "version": "0.1.0",
+  "description": "opencode 通知插件 - 监听会话事件并通过多渠道推送通知",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@opencode-ai/plugin": "latest",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.1"
+  }
+}
