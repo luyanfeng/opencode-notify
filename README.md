@@ -2,6 +2,22 @@
 
 opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送通知到你的手机、群聊或桌面。
 
+> ⚠️ **由AI辅助生成，内容及程序请辨别使用**
+>
+> **个人项目，按需使用**
+>
+> 此插件主要面向作者个人使用场景开发和测试，不一定适合所有用户和环境。
+>
+> **已知局限：**
+> - Windows 系统通知需额外安装 [BurntToast](https://github.com/Windos/BurntToast) PowerShell 模块
+> - Linux 系统通知需 `libnotify` 包（桌面发行版通常预装）
+> - 事件映射基于 @opencode-ai/plugin@1.15.12 的行为，后续版本升级可能影响兼容性
+> - `run_completed` 事件暂未实现（opencode 无直接完成事件）
+> - 屏幕跑马灯效果仅 Linux X11 环境支持（依赖 Python + PyGObject），Wayland/macOS/Windows 不生效
+> - 仅在 Ubuntu 24.04 (X11) 环境下测试并使用，其它平台未验证
+>
+> 如有问题欢迎提 Issue，但不保证及时响应和修复。
+
 ## 功能特性
 
 - 监听 `permission_required` / `input_required` / `run_failed` 等事件
@@ -371,18 +387,3 @@ opencode-notify/
 └── tsconfig.json
 ```
 
-## 免责声明
-
-> ⚠️ **个人项目，按需使用**
->
-> 此插件主要面向作者个人使用场景开发和测试，不一定适合所有用户和环境。
->
-> **已知局限：**
-> - Windows 系统通知需额外安装 [BurntToast](https://github.com/Windos/BurntToast) PowerShell 模块
-> - Linux 系统通知需 `libnotify` 包（桌面发行版通常预装）
-> - 事件映射基于 @opencode-ai/plugin@1.15.12 的行为，后续版本升级可能影响兼容性
-> - `run_completed` 事件暂未实现（opencode 无直接完成事件）
-> - 屏幕跑马灯效果仅 Linux X11 环境支持（依赖 Python + PyGObject），Wayland/macOS/Windows 不生效
-- 仅在 Ubuntu 24.04 (X11) 环境下测试并使用，其它平台未验证
->
-> 如有问题欢迎提 Issue，但不保证及时响应和修复。
