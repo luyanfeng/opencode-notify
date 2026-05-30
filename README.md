@@ -10,6 +10,8 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 - 去重机制：同一事件在时间窗口内不重复发送
 - 活跃抑制：检测到用户在操作 TUI 时可自动跳过通知
 - 零外部运行时依赖（仅 js-yaml 用于配置解析）
+- **屏幕跑马灯**：通知时屏幕四边高亮闪烁（Linux X11，Python + GTK 内置）
+- **渠道级事件过滤**：每个渠道可独立配置监听哪些事件，灵活分流
 
 ## 平台支持
 
@@ -19,11 +21,13 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 | 自定义 Webhook / 企业微信 / 飞书 | ✅ | ✅ | ✅ |
 | 诊断 CLI (`bun cli.ts`) | ✅ | ✅ | ✅ |
 | **系统通知** | ✅ `osascript` 内置 | ⚠️ 需 `libnotify` 包 | ⚠️ 需 BurntToast 模块 |
+| **屏幕跑马灯** | ❌ | ✅ Python+GTK 内置 | ❌ |
 
 **说明：**
 - **macOS**: 系统通知使用 `osascript`，系统内置，开箱即用
 - **Linux**: 系统通知使用 `notify-send`，来自 `libnotify`。桌面发行版通常预装，如缺失可 `apt install libnotify-bin` / `yum install libnotify`
 - **Windows**: 系统通知使用 PowerShell `New-BurntToastNotification`，需额外安装 [BurntToast](https://github.com/Windos/BurntToast) 模块。Webhook 渠道不受影响
+- **屏幕跑马灯**: 仅 Linux X11 环境。使用 Python + PyGObject(GTK 3)，Ubuntu GNOME 桌面内置，无需额外安装。Wayland 暂不支持
 - 非系统通知模块（Webhook 推送、CLI 诊断）均为纯 HTTP/Node API，全平台一致
 
 ## 快速开始
@@ -50,6 +54,12 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 channels:
   system:
     enabled: true
+    # events: [permission_required, input_required]   # 可选，不填继承全局
+    screen_flash:
+      enabled: true
+      duration: 3.5
+      speed: 5.0
+      intensity: 0.85
 
   custom_webhook:
     enabled: false
@@ -76,23 +86,27 @@ suppress_when_active: false
 activity_timeout_ms: 30000
 ```
 
-### 3. 重启 opencode
-
-关闭当前 opencode 会话，重新打开。插件自动加载，查看日志确认：
-
-```bash
-tail -f ~/.opencode-notify/plugin.log
-```
-
-看到类似输出即加载成功：
-
-```
-[2026-05-30T10:00:00.000Z] 插件已加载, 配置: events=["permission_required","input_required","run_failed"], suppressActive=false, timeout=30000ms
-[2026-05-30T10:00:00.000Z] 系统通知渠道已启用
-[2026-05-30T10:00:00.000Z] 自定义 Webhook 渠道已启用
-```
-
 ## 通知渠道
+
+每个渠道可以独立配置监听的事件，不填则继承全局 `events` 配置。
+
+可选事件值与全局 `events` 一致：
+
+| 事件值 | 说明 |
+|--------|------|
+| `permission_required` | Agent 需要用户授权（执行命令、读写文件等） |
+| `input_required` | Agent 等待用户输入 |
+| `run_failed` | 任务执行失败 |
+| `run_completed` | 任务执行完成（技术预留，暂未实现） |
+
+```yaml
+# 自定义 Webhook 只推送权限请求和错误，不推送等待输入
+custom_webhook:
+  enabled: true
+  events:
+    - permission_required
+    - run_failed
+```
 
 ### 系统通知
 
@@ -103,6 +117,31 @@ tail -f ~/.opencode-notify/plugin.log
 | macOS | `osascript` (display notification) |
 | Linux | `notify-send`（需安装 `libnotify`） |
 | Windows | PowerShell (New-BurntToastNotification) |
+
+#### 屏幕跑马灯（Linux X11 专用）
+
+通知时在屏幕四边生成彩色高亮闪烁效果（跑马灯），视觉上更醒目：
+
+![跑马灯效果](doc/de.png)
+
+- 使用 Python + PyGObject(GTK 3) 创建透明覆盖窗口，不干扰当前操作
+- 60fps 动画，彩色灯光沿四边循环运动（红→橙→黄→绿→蓝）
+- 非阻塞执行，不影响通知发送速度
+- 依赖 python3 + PyGObject，Ubuntu GNOME 桌面内置，无需额外安装
+
+```yaml
+# 简单开关（使用默认参数）
+system:
+  screen_flash: true
+
+# 自定义参数
+system:
+  screen_flash:
+    enabled: true       # 必须
+    duration: 3.0       # 持续秒数（默认 3.0）
+    speed: 4.0          # 移动速度因子（默认 4.0）
+    intensity: 0.9      # 不透明度 0.0~1.0（默认 0.9）
+```
 
 ### 自定义 Webhook
 
@@ -204,9 +243,18 @@ YAML 文件 > plugin options (opencode.json) > 环境变量 > 默认值
 channels:
   system:
     enabled: true              # 系统通知开关
+    events: []                 # 可选，渠道级事件过滤（不填继承全局）
+                               # 可选值: permission_required | input_required | run_completed | run_failed
+    screen_flash:              # 屏幕跑马灯（仅 Linux X11）
+      enabled: true            #   开启（默认 false）
+      duration: 3.5            #   持续秒数
+      speed: 5.0               #   移动速度因子
+      intensity: 0.85          #   不透明度 0.0~1.0
 
   custom_webhook:
     enabled: false             # 自定义 Webhook 开关
+    events: []                 # 可选，渠道级事件过滤
+                               # 可选值: permission_required | input_required | run_completed | run_failed
     url: ""                    # Webhook 地址
     method: "POST"             # 请求方法 POST | GET
     headers: {}                # 自定义请求头
@@ -214,20 +262,23 @@ channels:
 
   wechat_work:
     enabled: false             # 企业微信开关
+    events: []                 # 可选，渠道级事件过滤
+                               # 可选值: permission_required | input_required | run_completed | run_failed
     webhook_url: ""            # 群机器人 Webhook URL
 
   feishu:
     enabled: false             # 飞书开关
+    events: []                 # 可选，渠道级事件过滤
+                               # 可选值: permission_required | input_required | run_completed | run_failed
     webhook_url: ""            # 机器人/流程触发器 Webhook URL
 
 events:                        # 订阅的事件列表
-  - permission_required
-  - input_required
-  - run_failed
+                                 # 可选值: permission_required | input_required | run_completed | run_failed
 
 dedupe_seconds: 60             # 去重时间窗口（秒）
 suppress_when_active: false    # 用户活跃时是否跳过通知
 activity_timeout_ms: 30000     # 活跃超时判定（毫秒）
+debug_log: false               # 写入 ~/.opencode-notify/plugin.log 调试日志（默认 false）
 ```
 
 ### 环境变量
@@ -251,7 +302,13 @@ activity_timeout_ms: 30000     # 30 秒无操作视为离开
 
 ## 日志与故障排查
 
-插件日志位于 `~/.opencode-notify/plugin.log`，包含：
+插件日志位于 `~/.opencode-notify/plugin.log`，默认**关闭**，需在配置中开启：
+
+```yaml
+debug_log: true
+```
+
+开启后日志包含：
 
 - 插件加载信息（配置、已启用渠道）
 - 收到的事件（`[event] type=...`）
@@ -298,6 +355,8 @@ opencode-notify/
 ├── dispatcher.ts            # 去重分发
 ├── store.ts                 # 状态存储
 ├── message.ts               # 消息模型
+├── scripts/
+│   └── marquee.py           # 屏幕跑马灯效果（Python+GTK）
 ├── senders/
 │   ├── types.ts             # Sender 接口
 │   ├── system.ts            # 系统通知
@@ -323,6 +382,7 @@ opencode-notify/
 > - Linux 系统通知需 `libnotify` 包（桌面发行版通常预装）
 > - 事件映射基于 @opencode-ai/plugin@1.15.12 的行为，后续版本升级可能影响兼容性
 > - `run_completed` 事件暂未实现（opencode 无直接完成事件）
-> - 仅在 Ubuntu 24.04 (X11) 环境下测试并使用，其它平台未验证
+> - 屏幕跑马灯效果仅 Linux X11 环境支持（依赖 Python + PyGObject），Wayland/macOS/Windows 不生效
+- 仅在 Ubuntu 24.04 (X11) 环境下测试并使用，其它平台未验证
 >
 > 如有问题欢迎提 Issue，但不保证及时响应和修复。

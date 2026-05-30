@@ -8,14 +8,26 @@ import { SystemSender } from "./senders/system.js"
 import { CustomWebhookSender } from "./senders/custom-webhook.js"
 import { WechatWorkSender } from "./senders/wechat-work.js"
 import { FeishuSender } from "./senders/feishu.js"
+import { FilteredSender } from "./senders/types.js"
 import { writeFileSync, mkdirSync, existsSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const MARQUEE_SCRIPT = join(__dirname, "scripts", "marquee.py")
 
 const LOG_DIR = join(homedir(), ".opencode-notify")
 const LOG_FILE = join(LOG_DIR, "plugin.log")
 
+let debugEnabled = false
+
+function enableDebug() {
+  debugEnabled = true
+}
+
 function log(msg: string) {
+  if (!debugEnabled) return
   try {
     if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true })
     writeFileSync(LOG_FILE, `[${new Date().toISOString()}] ${msg}\n`, { flag: "a" })
@@ -38,6 +50,7 @@ const plugin: Plugin = async (_input, options) => {
   const yamlCfg = loadYamlConfig() ?? {}
   const merged = mergeConfig(yamlCfg, options as PluginConfig ?? {})
   const cfg = resolveConfig(merged)
+  if (cfg.debug_log) enableDebug()
   const store = new FileStore()
   const senders = buildSenders(cfg)
   const dispatcher = new Dispatcher(store, cfg.dedupe_seconds ?? 60, senders)
@@ -46,7 +59,7 @@ const plugin: Plugin = async (_input, options) => {
   const suppressActive = cfg.suppress_when_active ?? true
   const activityTimeout = cfg.activity_timeout_ms ?? 30_000
 
-  log(`插件已加载, 配置: events=${JSON.stringify(cfg.events)}, suppressActive=${suppressActive}, timeout=${activityTimeout}ms`)
+  log(`插件已加载, debug_log=${cfg.debug_log}, events=${JSON.stringify(cfg.events)}, suppressActive=${suppressActive}, timeout=${activityTimeout}ms`)
 
   return {
     // event 总线 — 所有事件通过此钩子
@@ -81,23 +94,43 @@ const plugin: Plugin = async (_input, options) => {
   }
 }
 
+function addSender(
+  senders: import("./senders/types.js").Sender[],
+  sender: import("./senders/types.js").Sender,
+  events: string[],
+  label: string,
+  extra?: string,
+) {
+  senders.push(new FilteredSender(sender, events))
+  const evt = events.length < 6 ? `events=${JSON.stringify(events)}` : `events=${events.length}个`
+  log(`${label}已启用 (${evt})${extra ? `, ${extra}` : ""}`)
+}
+
 function buildSenders(cfg: PluginConfig) {
   const senders: import("./senders/types.js").Sender[] = []
+  const globalEvents = cfg.events ?? []
+
   if (cfg.channels?.system?.enabled) {
-    senders.push(new SystemSender())
-    log("系统通知渠道已启用")
+    const flashCfg = cfg.channels.system.screen_flash as
+      | import("./config.js").ScreenFlashConfig
+      | undefined
+    const scriptPath =
+      flashCfg && process.platform === "linux" ? MARQUEE_SCRIPT : undefined
+    const events = cfg.channels.system.events ?? globalEvents
+    addSender(senders, new SystemSender(flashCfg, scriptPath), events, "系统通知",
+      flashCfg ? "跑马灯已启用" : undefined)
   }
   if (cfg.channels?.custom_webhook?.enabled && cfg.channels.custom_webhook.url) {
-    senders.push(new CustomWebhookSender(cfg.channels.custom_webhook))
-    log("自定义 Webhook 渠道已启用")
+    const events = cfg.channels.custom_webhook.events ?? globalEvents
+    addSender(senders, new CustomWebhookSender(cfg.channels.custom_webhook), events, "自定义 Webhook")
   }
   if (cfg.channels?.wechat_work?.enabled && cfg.channels.wechat_work.webhook_url) {
-    senders.push(new WechatWorkSender(cfg.channels.wechat_work))
-    log("企业微信渠道已启用")
+    const events = cfg.channels.wechat_work.events ?? globalEvents
+    addSender(senders, new WechatWorkSender(cfg.channels.wechat_work), events, "企业微信")
   }
   if (cfg.channels?.feishu?.enabled && cfg.channels.feishu.webhook_url) {
-    senders.push(new FeishuSender(cfg.channels.feishu))
-    log("飞书渠道已启用")
+    const events = cfg.channels.feishu.events ?? globalEvents
+    addSender(senders, new FeishuSender(cfg.channels.feishu), events, "飞书")
   }
   return senders
 }
