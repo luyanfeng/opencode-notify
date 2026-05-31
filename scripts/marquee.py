@@ -20,6 +20,7 @@ import signal
 
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, GLib, Gdk
+import cairo as _cairo
 
 # 跑马灯颜色序列：红 → 橙 → 黄 → 绿 → 蓝
 MARQUEE_COLORS = [
@@ -63,20 +64,33 @@ class MarqueeWindow(Gtk.Window):
         self.t = 0.0
 
         # 设置透明背景
-        rgba = screen.get_rgba_visual()
-        if rgba:
-            self.set_visual(rgba)
+        self._setup_transparency()
 
+        self.connect("realize", self._on_realize)
         self.connect("draw", self.on_draw)
         self.connect("screen-changed", self.on_screen_changed)
 
         # 60fps 动画循环
         GLib.timeout_add(16, self.on_tick)
 
-    def on_screen_changed(self, widget, old_screen):
-        visual = widget.get_screen().get_rgba_visual()
+    def _setup_transparency(self):
+        """配置 RGBA 透明支持"""
+        visual = self.get_screen().get_rgba_visual()
         if visual:
-            widget.set_visual(visual)
+            self.set_visual(visual)
+        else:
+            # 没有 RGBA 支持时回退为整体窗口透明度
+            self.set_opacity(self.intensity)
+
+    def _on_realize(self, widget):
+        """窗口实时化后，设置空的输入区域 → 点击穿透"""
+        surf = _cairo.ImageSurface(_cairo.Format.A1, 1, 1)
+        empty = Gdk.cairo_region_create_from_surface(surf)
+        if empty:
+            widget.input_shape_combine_region(empty)
+
+    def on_screen_changed(self, widget, old_screen):
+        self._setup_transparency()
 
     def on_draw(self, widget, cr):
         w = self.screen_w
@@ -87,9 +101,9 @@ class MarqueeWindow(Gtk.Window):
 
         # 清空为全透明
         cr.set_source_rgba(0, 0, 0, 0)
-        cr.set_operator(1)  # CAIRO_OPERATOR_SOURCE
+        cr.set_operator(_cairo.Operator.SOURCE)
         cr.paint()
-        cr.set_operator(2)  # CAIRO_OPERATOR_OVER
+        cr.set_operator(_cairo.Operator.OVER)
 
         # 构造所有灯光的 (x, y, width, height, side_index)
         lights = []
