@@ -1,5 +1,5 @@
 {
-  "name": "@luyanfeng/opencode-notify",
+  "name": "@freely01/opencode-notify",
   "version": "0.1.0",
   "description": "opencode 通知插件 - 监听会话事件并通过多渠道推送通知",
   "type": "module",
@@ -14,7 +14,7 @@
   "files": [
     "*.ts",
     "senders/",
-    "scripts/",
+    "scripts/marquee.py",
     "README.md",
     "LICENSE"
   ],

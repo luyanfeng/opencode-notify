@@ -56,12 +56,12 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 
 **方式一：从 npm 安装（推荐）**
 ```bash
-npm install -g @luyanfeng/opencode-notify
+npm install -g @freely01/opencode-notify
 ```
 
 ```json
 {
-  "plugin": ["@luyanfeng/opencode-notify"]
+  "plugin": ["@freely01/opencode-notify"]
 }
 ```
 
