@@ -46,6 +46,8 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 - **屏幕跑马灯**: 仅 Linux X11 环境。使用 Python + PyGObject(GTK 3)，Ubuntu GNOME 桌面内置，无需额外安装。Wayland 暂不支持
 - 非系统通知模块（Webhook 推送、CLI 诊断）均为纯 HTTP/Node API，全平台一致
 
+> **已测试渠道：** 系统通知、企业微信、自定义 Webhook（Gotify）。飞书等其他渠道理论可用，暂未做验证。
+
 ## 快速开始
 
 ### 1. 安装
