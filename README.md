@@ -52,6 +52,18 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 
 将插件添加到 `~/.config/opencode/opencode.json` 的 `plugin` 列表中：
 
+**方式一：从 npm 安装（推荐）**
+```bash
+npm install -g @luyanfeng/opencode-notify
+```
+
+```json
+{
+  "plugin": ["@luyanfeng/opencode-notify"]
+}
+```
+
+**方式二：本地路径（开发调试）**
 ```json
 {
   "plugin": [
@@ -60,7 +72,7 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 }
 ```
 
-> 路径替换为你实际存放 `opencode-notify` 项目的目录。
+> 本地路径替换为你实际存放项目的目录。
 
 ### 2. 配置
 

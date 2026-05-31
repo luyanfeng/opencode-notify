@@ -1,14 +1,42 @@
 {
-  "name": "opencode-notify",
+  "name": "@luyanfeng/opencode-notify",
   "version": "0.1.0",
   "description": "opencode 通知插件 - 监听会话事件并通过多渠道推送通知",
   "type": "module",
   "main": "index.ts",
   "exports": {
-    ".": "./index.ts"
+    ".": "./index.ts",
+    "./cli": "./cli.ts"
   },
-  "author": "",
+  "bin": {
+    "opencode-notify": "cli.ts"
+  },
+  "files": [
+    "*.ts",
+    "senders/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "opencode",
+    "notification",
+    "plugin",
+    "notify"
+  ],
+  "author": "luyanfeng",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luyanfeng/opencode-notify.git"
+  },
+  "bugs": {
+    "url": "https://github.com/luyanfeng/opencode-notify/issues"
+  },
+  "homepage": "https://github.com/luyanfeng/opencode-notify#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@opencode-ai/plugin": "latest",
     "@types/js-yaml": "^4.0.9",
