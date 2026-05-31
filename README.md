@@ -219,7 +219,18 @@ wechat_work:
   webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
 ```
 
-消息包含：标题、事件详情、会话 ID。
+消息格式：Markdown，实际发送的请求体：
+
+```json
+{
+  "msgtype": "markdown",
+  "markdown": {
+    "content": "**事件标题**\n\n事件详情...\n> 会话: sessionID"
+  }
+}
+```
+
+消息包含：标题（加粗）、事件详情、会话 ID。
 
 ### 飞书
 
@@ -237,7 +248,25 @@ feishu:
   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
 ```
 
-消息格式：卡片消息，包含标题头、正文（Markdown）、分割线、脚注（会话 ID）。
+消息格式：卡片消息（interactive），实际发送的请求体：
+
+```json
+{
+  "msg_type": "interactive",
+  "card": {
+    "header": {
+      "title": { "tag": "plain_text", "content": "事件标题" }
+    },
+    "elements": [
+      { "tag": "markdown", "content": "事件详情..." },
+      { "tag": "hr" },
+      { "tag": "note", "elements": [{ "tag": "plain_text", "content": "会话: sessionID" }] }
+    ]
+  }
+}
+```
+
+消息包含：标题头、正文（Markdown）、分割线、脚注（会话 ID）。
 
 ## 事件映射
 
@@ -292,12 +321,14 @@ channels:
     events: []                 # 可选，渠道级事件过滤
                                # 可选值: permission_required | input_required | run_completed | run_failed
     webhook_url: ""            # 群机器人 Webhook URL
+                               # 消息格式: Markdown (msgtype=markdown, markdown.content)
 
   feishu:
     enabled: false             # 飞书开关
     events: []                 # 可选，渠道级事件过滤
                                # 可选值: permission_required | input_required | run_completed | run_failed
     webhook_url: ""            # 机器人/流程触发器 Webhook URL
+                               # 消息格式: 卡片消息 (msg_type=interactive, card)
 
 events:                        # 订阅的事件列表
                                  # 可选值: permission_required | input_required | run_completed | run_failed
