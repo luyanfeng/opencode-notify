@@ -67,7 +67,7 @@ npm install -g @luyanfeng/opencode-notify
 ```json
 {
   "plugin": [
-    "file:///home/lyf/Documents/IdeaProjects/lyf/ai/opencode-notify/index.ts"
+    "file:///home/<你的用户名>/path/to/opencode-notify/index.ts"
   ]
 }
 ```
