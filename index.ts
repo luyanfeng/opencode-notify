@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import type { PluginConfig } from "./config.js"
-import { resolveConfig, loadYamlConfig, mergeConfig } from "./config.js"
+import { resolveConfig, loadYamlConfig, mergeConfig, ensureConfigFile } from "./config.js"
 import { route } from "./events.js"
 import { Dispatcher } from "./dispatcher.js"
 import { FileStore } from "./store.js"
@@ -54,6 +54,9 @@ const SESSION_LIFECYCLE_EVENTS = new Set([
 ])
 
 const plugin: Plugin = async (_input, options) => {
+  // 确保配置文件存在（不存在则生成默认模板）
+  ensureConfigFile()
+
   // 加载 YAML 配置 + 合并 plugin options
   const yamlCfg = loadYamlConfig() ?? {}
   const merged = mergeConfig(yamlCfg, options as PluginConfig ?? {})

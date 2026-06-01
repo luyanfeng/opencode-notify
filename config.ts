@@ -92,20 +92,107 @@ export interface PluginConfig {
   debug_log?: boolean
 }
 
-import { readFileSync, existsSync } from "node:fs"
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
 import yaml from "js-yaml"
 
+/** 默认配置文件路径 */
+export function defaultConfigPath(): string {
+  return (
+    process.env.OPENCODE_NOTIFY_CONFIG ??
+    join(homedir(), ".config", "opencode", "opencode-notify.yaml")
+  )
+}
+
+/** 默认配置模板内容（仅启用系统通知） */
+const DEFAULT_CONFIG_TEMPLATE = `# =============================================================================
+# opencode-notify 配置文件
+# =============================================================================
+# 文件位置: ~/.config/opencode/opencode-notify.yaml
+# 
+# 配置优先级: 此文件 > plugin options > 环境变量 > 默认值
+#
+# 首次运行自动生成，仅启用了系统通知渠道。
+# 其他渠道（企业微信、飞书、自定义 Webhook）可按需取消注释。
+#
+# 完整配置参考: https://github.com/luyanfeng/opencode-notify
+# =============================================================================
+
+channels:
+  # 系统消息通知 — 默认启用，开箱即用
+  system_message:
+    enabled: true
+
+  # 屏幕跑马灯 — Linux X11 专用，取消注释启用
+  # screen_flash:
+  #   enabled: true
+  #   duration: 3.0
+  #   speed: 4.0
+  #   intensity: 0.9
+
+  # 企业微信 — 取消注释并填入 webhook_url 启用
+  # wechat_work:
+  #   enabled: true
+  #   webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
+
+  # 飞书 — 取消注释并填入 webhook_url 启用
+  # feishu:
+  #   enabled: true
+  #   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
+
+  # 自定义 Webhook — 取消注释并配置 url 启用
+  # custom_webhook:
+  #   enabled: true
+  #   url: ""
+  #   method: "POST"
+  #   headers: {}
+  #   template: ""
+
+# 全局订阅事件（渠道不填则继承此列表）
+events:
+  - permission_required
+  - input_required
+  - run_failed
+
+# 去重时间窗口（秒），同一事件窗口内不重复发送
+dedupe_seconds: 60
+
+# 会话感知抑制 — 活跃会话跳过屏上可见的通知
+suppress_when_active: true
+activity_timeout_ms: 15000
+suppress_events_when_active:
+  - permission_required
+  - input_required
+session_stale_timeout_ms: 600000
+
+# 调试日志（仅排查问题时开启）
+debug_log: false
+`
+
 /**
- * 加载 YAML 配置文件
+ * 确保配置文件存在，不存在则生成默认模板
  *
- * 文件路径优先级:
- * 1. OPENCODE_NOTIFY_CONFIG 环境变量
- * 2. ~/.config/opencode/opencode-notify.yaml
- *
- * 文件不存在时返回 null，插件使用默认配置 + plugin options
+ * 如果由 OPENCODE_NOTIFY_CONFIG 自定义了路径，不自动生成（用户明确指定了）
+ * 仅在默认路径 ~/.config/opencode/opencode-notify.yaml 不存在时生成
  */
+export function ensureConfigFile(): void {
+  // 用户自定义了路径 → 不自动生成
+  if (process.env.OPENCODE_NOTIFY_CONFIG) return
+
+  const configPath = join(homedir(), ".config", "opencode", "opencode-notify.yaml")
+  if (existsSync(configPath)) return  // 已存在
+
+  try {
+    const configDir = dirname(configPath)
+    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true })
+    writeFileSync(configPath, DEFAULT_CONFIG_TEMPLATE, "utf-8")
+    console.error(`[opencode-notify] 已生成默认配置文件: ${configPath}`)
+  } catch {
+    // 生成失败不影响插件加载（使用内置默认配置）
+  }
+}
+
 export function loadYamlConfig(): PluginConfig | null {
   const configPath =
     process.env.OPENCODE_NOTIFY_CONFIG ??
