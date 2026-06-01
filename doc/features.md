@@ -13,7 +13,7 @@ opencode-notify 是一个 opencode 通知插件，监听会话中的关键事件
 | 渠道 | 适用场景 | 要求 |
 |------|---------|------|
 | 系统通知 | 本地桌面开发，弹 OS 原生通知横幅 | Linux: `notify-send` / macOS: 内置 / Windows: BurntToast |
-| 屏幕跑马灯 | 人不在屏幕前时，通过余光感知有通知（屏幕四边高亮闪烁） | Linux X11 + Python GTK |
+| 屏幕跑马灯 | 人不在屏幕前时，通过余光感知有通知（屏幕四边高亮闪烁） | Linux: Python + GTK / Windows: PowerShell + WinForms |
 | 企业微信 | 团队协作，通知发到企微群 | 企微群机器人 Webhook |
 | 飞书 | 团队协作，通知发到飞书群 | 飞书自定义机器人 Webhook |
 | 自定义 Webhook | 对接任意 HTTP 服务（Gotify / Bark / Slack / Discord 等） | HTTP 服务地址 |
