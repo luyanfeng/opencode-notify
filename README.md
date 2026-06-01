@@ -9,7 +9,7 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 > 此插件主要面向作者个人使用场景开发和测试，不一定适合所有用户和环境。
 >
 > **AI 提示：**
-> - Windows 系统通知需额外安装 [BurntToast](https://github.com/Windos/BurntToast) PowerShell 模块
+> - Windows 系统通知使用 WinRT Native Toast，开箱即用（无需额外安装）
 > - Linux 系统通知需 `libnotify` 包（桌面发行版通常预装）
 > - 事件映射基于 @opencode-ai/plugin@1.15.12 的行为，后续版本升级可能影响兼容性
 > - `run_completed` 事件暂未实现（opencode 无直接完成事件）
@@ -38,13 +38,13 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 | 插件核心（事件监听/路由/分发） | ✅ | ✅ | ✅ |
 | 自定义 Webhook / 企业微信 / 飞书 | ✅ | ✅ | ✅ |
 | 诊断 CLI (`bun cli.ts`) | ✅ | ✅ | ✅ |
-| **系统消息通知** | ✅ `osascript` 内置 | ⚠️ 需 `libnotify` 包 | ⚠️ 需 BurntToast 模块 |
+| **系统消息通知** | ✅ `osascript` 内置 | ⚠️ 需 `libnotify` 包 | ✅ WinRT Native Toast |
 | **屏幕跑马灯** | ❌ | ✅ Ubuntu 24.04 X11 | ✅ PowerShell+WinForms |
 
 **说明：**
 - **macOS**: 系统通知使用 `osascript`，系统内置，开箱即用
 - **Linux**: 系统通知使用 `notify-send`，来自 `libnotify`。桌面发行版通常预装，如缺失可 `apt install libnotify-bin` / `yum install libnotify`
-- **Windows**: 系统通知使用 PowerShell `New-BurntToastNotification`，需额外安装 [BurntToast](https://github.com/Windos/BurntToast) 模块。Webhook 渠道不受影响
+- **Windows**: 系统通知使用 WinRT Native Toast，注册表注册后显示为 opencode-notify 并进入操作中心。回退方案：UUID 方式弹窗 → NotifyIcon 系统托盘气泡。Webhook 渠道不受影响
 - **屏幕跑马灯**: Ubuntu 24.04 X11 使用 Python + PyGObject(GTK 3) 创建透明覆盖窗口，60fps 彩色四边跑马灯动画；Windows 使用 PowerShell + .NET WinForms 创建屏幕四边彩色闪烁边框，中间完全透明可点击穿透，不影响操作。macOS 暂不支持
 - 非系统通知模块（Webhook 推送、CLI 诊断）均为纯 HTTP/Node API，全平台一致
 
@@ -158,7 +158,7 @@ custom_webhook:
 |------|------|
 | macOS | `osascript` (display notification) |
 | Linux | `notify-send`（需安装 `libnotify`） |
-| Windows | PowerShell (New-BurntToastNotification) |
+| Windows | WinRT Native Toast（开箱即用） |
 
 ### 屏幕跑马灯
 
