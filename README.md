@@ -80,7 +80,7 @@ npm install -g @freely01/opencode-notify
 
 ### 2. 配置
 
-创建 `~/.config/opencode/opencode-notify.yaml`，完整示例：
+创建 `~/.config/opencode/opencode-notify.yaml`（首次运行自动生成，也可参考项目中的 `opencode-notify.yaml.example`），完整示例：
 
 ```yaml
 channels:
@@ -521,7 +521,7 @@ opencode-notify/
 │   ├── custom-webhook.ts    # 自定义 Webhook
 │   ├── wechat-work.ts       # 企业微信
 │   └── feishu.ts            # 飞书
-├── findings.md              # 研究记录
+├── opencode-notify.yaml.example  # 配置模板（首次运行自动生成）
 ├── plan.md                  # 需求与实现计划
 ├── task_plan.md             # 任务跟踪
 ├── progress.md              # 进度日志
