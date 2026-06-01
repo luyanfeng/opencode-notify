@@ -74,6 +74,46 @@
 
 ---
 
+## Phase 4: 远程延迟推送
+
+| 步骤 | 状态 | 可交付物 |
+|------|------|---------|
+| 4.1 配置项 `remote_delay_channels` / `remote_delay_seconds` / `remote_delay_max_count` | 🟢 | config.ts |
+| 4.2 `DelayedDispatcher` 模块 | 🟢 | delayed-dispatcher.ts |
+| 4.3 集成到 index.ts（调度 + 取消） | 🟢 | index.ts |
+| 4.4 文档更新（README + YAML 模板） | 🟢 | README.md + config.ts |
+| 4.5 编译验证 | 🟢 | `tsc --noEmit` |
+
+**里程碑**: 远程延迟推送功能完成，不增加外部依赖
+
+---
+
+## Phase 5: 日志体系重构
+
+| 步骤 | 状态 | 可交付物 |
+|------|------|---------|
+| 5.1 log.ts 重写为等级式日志 | 🟢 | log.ts (error/warn/info/debug) |
+| 5.2 config: debug_log → log.level + log.file | 🟢 | config.ts |
+| 5.3 全模块日志覆盖 | 🟢 | dispatcher / store / session-tracker 等 |
+| 5.4 CLI 适配 | 🟢 | cli.ts (读取 log.file / 显示 log.level) |
+| 5.5 文档更新 | 🟢 | README + YAML 模板 |
+
+**里程碑**: 日志体系完善，支持四级等级和自定义路径
+
+---
+
+## Phase 6: 终端子屏幕遮挡检测
+
+| 步骤 | 状态 | 可交付物 |
+|------|------|---------|
+| 6.1 `terminator-detect.ts` DBus 多策略检测模块 | 🟢 | terminator-detect.ts |
+| 6.2 config: `force_notify_terminals` 配置项 | 🟢 | config.ts |
+| 6.3 集成到 index.ts 抑制逻辑 | 🟢 | index.ts |
+| 6.4 文档 + 本地配置更新 | 🟢 | README + YAML |
+| 6.5 编译验证 | 🟢 | `tsc --noEmit` |
+
+**里程碑**: Terminator 子屏幕最大化时强制通知，不遗漏
+
 ## 决策记录
 
 | 日期 | 决策 | 理由 |

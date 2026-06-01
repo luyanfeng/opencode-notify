@@ -9,6 +9,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { warn, error } from "./log.js"
 
 interface StoreData {
   lastSent: Record<string, number> // key → unix timestamp (seconds)
@@ -90,8 +91,8 @@ export class FileStore {
       const raw = readFileSync(this.path, "utf-8")
       const data = JSON.parse(raw) as StoreData
       this.lastSent = data.lastSent ?? {}
-    } catch {
-      // 文件损坏时使用空状态
+    } catch (e) {
+      warn(`去重状态文件读取失败，使用空状态: ${e instanceof Error ? e.message : String(e)}`)
       this.lastSent = {}
     }
   }
@@ -104,8 +105,8 @@ export class FileStore {
       }
       const data: StoreData = { lastSent: this.lastSent }
       writeFileSync(this.path, JSON.stringify(data, null, 2), "utf-8")
-    } catch {
-      // 持久化失败不应影响主流程
+    } catch (e) {
+      error(`去重状态持久化失败: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 }

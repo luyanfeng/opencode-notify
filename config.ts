@@ -49,6 +49,14 @@ export interface ChannelsConfig {
   custom_webhook?: CustomWebhookChannelConfig
 }
 
+/** 日志配置 */
+export interface LogConfig {
+  /** 日志等级：error | warn | info | debug，默认 info */
+  level?: string
+  /** 日志文件路径，默认 ~/.opencode-notify/plugin.log */
+  file?: string
+}
+
 /** 插件配置 */
 export interface PluginConfig {
   channels?: ChannelsConfig
@@ -88,8 +96,43 @@ export interface PluginConfig {
    * @default 600000 (10 分钟)
    */
   session_stale_timeout_ms?: number
-  /** 写入 ~/.opencode-notify/plugin.log 调试日志，默认 false */
-  debug_log?: boolean
+  /**
+   * 远程延迟推送渠道列表
+   *
+   * 这些渠道在正常通知发出后，还会额外进行一次延迟推送。
+   * 正常通知不受影响（该发就发），延迟推送是额外补偿。
+   *
+   * 适用场景：用户不在电脑前时，正常通知可能没看到，
+   * 延迟推送在用户仍未操作时再次通知。
+   *
+   * 用户回到 opencode TUI 操作 → 取消该会话所有待发延迟通知。
+   *
+   * @default [] （不启用延迟推送）
+   */
+  remote_delay_channels?: string[]
+  /**
+   * 远程延迟秒数
+   * 正常通知发出后等待此秒数，用户仍无操作则再次通知
+   * @default 60
+   */
+  remote_delay_seconds?: number
+  /**
+   * 远程延迟最多重复次数
+   * @default 3
+   */
+  remote_delay_max_count?: number
+  /**
+   * 日志配置
+   *
+   * level: error | warn | info | debug
+   *   - error → 仅记录错误
+   *   - warn  → 错误 + 警告
+   *   - info  → 错误 + 警告 + 常规信息（默认）
+   *   - debug → 全部日志（相当于旧版的 debug_log: true）
+   *
+   * file: 日志文件路径，默认 ~/.opencode-notify/plugin.log
+   */
+  log?: LogConfig
 }
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs"
@@ -99,10 +142,7 @@ import yaml from "js-yaml"
 
 /** 默认配置文件路径 */
 export function defaultConfigPath(): string {
-  return (
-    process.env.OPENCODE_NOTIFY_CONFIG ??
-    join(homedir(), ".config", "opencode", "opencode-notify.yaml")
-  )
+  return join(homedir(), ".config", "opencode", "opencode-notify.yaml")
 }
 
 /** 默认配置模板内容（仅启用系统通知） */
@@ -111,13 +151,7 @@ const DEFAULT_CONFIG_TEMPLATE = `# =============================================
 # =============================================================================
 # 文件位置: ~/.config/opencode/opencode-notify.yaml
 #
-# 配置优先级: 此文件 > plugin options (opencode.json tuple) > 环境变量 > 默认值
-#
-# 环境变量:
-#   OPENCODE_NOTIFY_CUSTOM_WEBHOOK_URL   - 覆盖 custom_webhook.url
-#   OPENCODE_NOTIFY_WECHAT_WEBHOOK       - 覆盖 wechat_work.webhook_url
-#   OPENCODE_NOTIFY_FEISHU_WEBHOOK       - 覆盖 feishu.webhook_url
-#   OPENCODE_NOTIFY_CONFIG               - 自定义配置文件路径
+# 配置优先级: YAML 文件 > plugin options (opencode.json tuple) > 默认值
 #
 # 首次运行自动生成，仅启用了系统通知渠道，开箱即用。
 # 其他渠道按需取消注释即可启用。
@@ -266,25 +300,44 @@ session_stale_timeout_ms: 600000     # 超时会话自动淘汰（毫秒）
 
 
 # =============================================================================
-# 调试日志
+# 远程延迟推送
 # =============================================================================
-# 写入 ~/.opencode-notify/plugin.log。
-# 包含：插件加载信息、收到的事件、匹配到的通知、发送结果。
-# 仅在排查问题时开启，日常使用建议关闭。
+# 正常通知发出后，如果用户长时间未操作，针对指定渠道额外再推送一次。
+# 用户回到 opencode TUI 操作 → 自动取消所有待发延迟通知。
+#
+# 适用场景：用户离开电脑后，系统通知可能一闪而过没看到，
+# 延迟推送在用户仍未回来时再次尝试发出。
+#
+# remote_delay_seconds 和 remote_delay_max_count 仅在
+# remote_delay_channels 非空时生效。
 # ---------------------------------------------------------------------------
-debug_log: false                     # true=启用, false=禁用（默认）
+remote_delay_channels: []            # 启用的延迟推送渠道列表
+                                     # 可选: system_message, screen_flash,
+                                     #       wechat_work, feishu, custom_webhook
+                                     # 空 = 不启用延迟推送
+# remote_delay_seconds: 60           # 延迟秒数（默认 60）
+# remote_delay_max_count: 3          # 最多重复次数（默认 3）
+
+
+# =============================================================================
+# 日志配置
+# =============================================================================
+# 所有通知失败、警告、运行信息均写入日志文件。
+# 日志等级控制输出详细程度，日常使用 info 即可。
+# ---------------------------------------------------------------------------
+log:
+  level: info                        # 日志等级: error | warn | info | debug
+                                     #   error - 仅记录错误
+                                     #   warn  - 错误 + 警告
+                                     #   info  - 错误 + 警告 + 常规信息（推荐）
+                                     #   debug - 全部日志（排查问题时使用）
+  # file: "~/.opencode-notify/plugin.log"  # 日志文件路径（可选，默认同上）
 `
 
 /**
  * 确保配置文件存在，不存在则生成默认模板
- *
- * 如果由 OPENCODE_NOTIFY_CONFIG 自定义了路径，不自动生成（用户明确指定了）
- * 仅在默认路径 ~/.config/opencode/opencode-notify.yaml 不存在时生成
  */
 export function ensureConfigFile(): void {
-  // 用户自定义了路径 → 不自动生成
-  if (process.env.OPENCODE_NOTIFY_CONFIG) return
-
   const configPath = join(homedir(), ".config", "opencode", "opencode-notify.yaml")
   if (existsSync(configPath)) return  // 已存在
 
@@ -299,9 +352,7 @@ export function ensureConfigFile(): void {
 }
 
 export function loadYamlConfig(): PluginConfig | null {
-  const configPath =
-    process.env.OPENCODE_NOTIFY_CONFIG ??
-    join(homedir(), ".config", "opencode", "opencode-notify.yaml")
+  const configPath = join(homedir(), ".config", "opencode", "opencode-notify.yaml")
 
   if (!existsSync(configPath)) return null
 
@@ -330,7 +381,7 @@ export function mergeConfig(base: PluginConfig, overrides: PluginConfig): Plugin
 }
 
 /** 默认配置 */
-const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "activity_timeout_ms" | "suppress_events_when_active" | "session_stale_timeout_ms" | "debug_log">> & PluginConfig = {
+const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "activity_timeout_ms" | "suppress_events_when_active" | "session_stale_timeout_ms" | "remote_delay_seconds" | "remote_delay_max_count">> & PluginConfig = {
   channels: {
     system_message: { enabled: true },
     screen_flash: { enabled: false },
@@ -349,25 +400,16 @@ const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "acti
   activity_timeout_ms: 15_000,
   suppress_events_when_active: ["permission_required", "input_required"],
   session_stale_timeout_ms: 600_000,
-  debug_log: false,
+  remote_delay_channels: [],
+  remote_delay_seconds: 60,
+  remote_delay_max_count: 3,
+  log: { level: "info", file: undefined },
 }
 
 /**
- * 合并配置：options → 环境变量 → 默认值
+ * 合并配置：options → 默认值
  */
 export function resolveConfig(options: PluginConfig): PluginConfig {
-  const wechatWebhook =
-    options.channels?.wechat_work?.webhook_url ||
-    process.env.OPENCODE_NOTIFY_WECHAT_WEBHOOK
-
-  const feishuWebhook =
-    options.channels?.feishu?.webhook_url ||
-    process.env.OPENCODE_NOTIFY_FEISHU_WEBHOOK
-
-  const customWebhookUrl =
-    options.channels?.custom_webhook?.url ||
-    process.env.OPENCODE_NOTIFY_CUSTOM_WEBHOOK_URL
-
   // 全局 events，各渠道继承此值
   const globalEvents = options.events ?? DEFAULT_CONFIG.events
 
@@ -397,14 +439,14 @@ export function resolveConfig(options: PluginConfig): PluginConfig {
         enabled:
           options.channels?.wechat_work?.enabled ??
           DEFAULT_CONFIG.channels!.wechat_work!.enabled,
-        webhook_url: wechatWebhook || undefined,
+        webhook_url: options.channels?.wechat_work?.webhook_url || undefined,
         events: chEvents(options.channels?.wechat_work),
       },
       feishu: {
         enabled:
           options.channels?.feishu?.enabled ??
           DEFAULT_CONFIG.channels!.feishu!.enabled,
-        webhook_url: feishuWebhook || undefined,
+        webhook_url: options.channels?.feishu?.webhook_url || undefined,
         events: chEvents(options.channels?.feishu),
       },
       custom_webhook: {
@@ -412,7 +454,7 @@ export function resolveConfig(options: PluginConfig): PluginConfig {
           options.channels?.custom_webhook?.enabled ??
           DEFAULT_CONFIG.channels?.custom_webhook?.enabled ??
           false,
-        url: customWebhookUrl || undefined,
+        url: options.channels?.custom_webhook?.url || undefined,
         method: options.channels?.custom_webhook?.method ?? "POST",
         headers: options.channels?.custom_webhook?.headers,
         template: options.channels?.custom_webhook?.template,
@@ -425,6 +467,12 @@ export function resolveConfig(options: PluginConfig): PluginConfig {
     activity_timeout_ms: options.activity_timeout_ms ?? DEFAULT_CONFIG.activity_timeout_ms,
     suppress_events_when_active: options.suppress_events_when_active ?? DEFAULT_CONFIG.suppress_events_when_active,
     session_stale_timeout_ms: options.session_stale_timeout_ms ?? DEFAULT_CONFIG.session_stale_timeout_ms,
-    debug_log: options.debug_log ?? DEFAULT_CONFIG.debug_log,
+    remote_delay_channels: options.remote_delay_channels ?? DEFAULT_CONFIG.remote_delay_channels,
+    remote_delay_seconds: options.remote_delay_seconds ?? DEFAULT_CONFIG.remote_delay_seconds,
+    remote_delay_max_count: options.remote_delay_max_count ?? DEFAULT_CONFIG.remote_delay_max_count,
+    log: {
+      level: options.log?.level ?? DEFAULT_CONFIG.log?.level ?? "info",
+      file: options.log?.file,
+    },
   }
 }

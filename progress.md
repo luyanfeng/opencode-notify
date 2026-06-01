@@ -95,3 +95,76 @@ package.json / tsconfig.json # 项目配置
 
 ### ⚫ 已取消
 - 配置向导（YAML 注释 + check 命令已够用）
+
+---
+
+## Phase 4: 远程延迟推送
+
+**设计**:
+- 正常通知不受影响，渠道该发就发
+- `remote_delay_channels` 列表中的渠道在正常通知后再补一次延迟推送
+- 用户活跃回到 TUI → 取消该会话所有待发延迟通知
+- 超时后发送，最多重复 `remote_delay_max_count` 次
+
+### 方案确认（2026-06-01）
+- `remote_delay_channels`: 全局列表，列出哪些渠道需要额外延迟推送
+- `remote_delay_seconds`: 延迟秒数（默认 60）
+- `remote_delay_max_count`: 最多重复次数（默认 3）
+- 延迟推送使用渠道级事件过滤（与正常通知一致的 FilteredSender）
+- `DelayedDispatcher` 模块独立于 `Dispatcher`，不参与去重
+- 用户活跃事件 (`USER_ACTIVITY_EVENTS`) + `session.deleted` 触发取消
+
+---
+
+## Phase 5: 日志体系重构
+
+### 已完成
+- log.ts 重写为等级式日志（error/warn/info/debug + 自定义路径）
+- config: `debug_log` → `log.level` + `log.file`
+- 全模块添加适当等级的日志覆盖（dispatcher / store / session-tracker 等）
+- CLI 适配（读取配置的 log.file / 显示 log.level）
+
+---
+
+## Phase 6: 终端子屏幕遮挡检测
+
+### 设计
+当用户在 Terminator 中最大化某个子屏时（Ctrl+Shift+X），其他子屏中的 opencode 会话被遮挡。
+启用 `force_notify_terminals: [Terminator]` 后，插件通过 DBus 检测当前焦点终端 UUID，
+与本进程 `$TERMINATOR_UUID` 比较。不一致 → 强制发送通知（忽略会话感知抑制）。
+
+### 检测策略（依次回退）
+1. `busctl`（systemd 自带，Ubuntu 预装）
+2. `python3 -c "import dbus"`（python3-dbus）
+3. `gdbus call`（GLib）
+4. `xdotool getactivewindow getwindowclassname`（回退，仅判断窗口类）
+
+---
+
+## Phase 5: 日志体系重构
+
+**设计**:
+- 将 `debug_log: boolean` 替换为 `log.level` + `log.file`，支持四级日志
+- 所有文件的关键路径添加适当的 `error()` / `warn()` / `info()` / `debug()` 调用
+
+### 日志等级
+
+| 等级 | 数值 | 说明 |
+|------|:----:|------|
+| `error` | 0 | 系统无法正常运行或功能不可用 |
+| `warn` | 1 | 潜在问题，不影响核心功能 |
+| `info` | 2 | 正常运行状态变化（默认） |
+| `debug` | 3 | 详细事件流，仅排查时开启 |
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `log.ts` | 重写为等级式日志，新增 `configureLog`/`error`/`warn`/`info`/`debug` |
+| `config.ts` | `debug_log` → `log.level` + `log.file` |
+| `index.ts` | 全部 `log()` 替换为等级函数，`enableDebug()` → `configureLog()` |
+| `dispatcher.ts` | 添加去重命中 `debug`、分发 `info`、失败 `error`/`warn` |
+| `delayed-dispatcher.ts` | 替换 `log()` 为等级函数，`console.error` → `error()` |
+| `store.ts` | 状态文件读取失败 `warn`、持久化失败 `error` |
+| `session-tracker.ts` | 销毁时清理 `warn` |
+| `cli.ts` | 日志文件路径从配置读取，显示日志等级 |

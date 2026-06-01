@@ -12,6 +12,8 @@
  *   session.created / session.deleted
  */
 
+import { warn } from "./log.js"
+
 export interface SessionInfo {
   sessionID: string
   /** 用户最后操作时间戳 */
@@ -117,7 +119,11 @@ export class SessionTracker {
       clearInterval(this.cleanupTimer)
       this.cleanupTimer = null
     }
+    const count = this.sessions.size
     this.sessions.clear()
+    if (count > 0) {
+      warn(`会话追踪器销毁，清理 ${count} 个未过期会话`)
+    }
   }
 
   /** 当前追踪的会话数（用于调试） */

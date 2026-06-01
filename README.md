@@ -28,6 +28,8 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 - 零外部运行时依赖（仅 js-yaml 用于配置解析）
 - **屏幕跑马灯**：通知时屏幕四边高亮闪烁（Linux X11，Python + GTK 内置）
 - **渠道级事件过滤**：每个渠道可独立配置监听哪些事件，灵活分流
+- **远程延迟推送**：正常通知发出后，指定渠道额外延迟推送以防遗漏
+- **Terminator 子屏检测**：自动检测子屏最大化场景，被遮挡的会话强制通知
 
 ## 平台支持
 
@@ -270,6 +272,41 @@ feishu:
 
 消息包含：标题头、正文（Markdown）、分割线、脚注（会话 ID）。
 
+### 远程延迟推送
+
+正常通知发出后，如果用户长时间未操作（未回到 opencode TUI），针对指定渠道额外再推送一次。
+用户在延迟期间回到 TUI 操作 → 自动取消该会话所有待发延迟通知。
+
+**适用场景：** 用户离开电脑后，系统通知可能一闪而过没看到；延迟推送在用户仍未回来时再次尝试发出。
+
+```yaml
+remote_delay_channels:          # 哪些渠道需要额外延迟推送（空=不启用）
+  - system_message
+  - wechat_work
+  - feishu
+  - custom_webhook
+remote_delay_seconds: 60        # 延迟秒数（默认 60）
+remote_delay_max_count: 3       # 最多重复次数（默认 3）
+```
+
+**注意：**
+- `remote_delay_channels` 仅影响**额外延迟推送**，不影响正常通知（正常通知该发就发）
+- 延迟推送使用渠道自身的事件过滤规则，只有渠道订阅的事件才会延迟推送
+- 用户在该会话中进行任何操作（输入消息、回应权限、执行命令等）都会取消该会话所有待发延迟
+- 达到 `remote_delay_max_count` 次后停止推送
+
+### Terminator 子屏遮挡检测（自动）
+
+当用户在 **Terminator** 中最大化某个子屏幕时（`Ctrl+Shift+X`），
+其他子屏幕中的 opencode 会话虽活跃但被遮挡。插件自动检测该场景，
+被遮挡的会话即使活跃也会强制发送通知。
+
+**检测原理**：`$TERMINATOR_UUID` + `$TERMINATOR_DBUS_NAME` + `$TERMINATOR_DBUS_PATH`
+环境变量确认在 Terminator 中 → DBus 查询焦点终端 UUID → 与本屏对比
+→ 不一致则强制通知，无需额外配置。
+
+**外部依赖**（任一即可）：`busctl`（systemd 内置）| `python3-dbus` | `gdbus` | `xdotool`
+
 ## 事件映射
 
 | 通知事件 | 触发场景 | 对应 opencode 事件 |
@@ -285,12 +322,10 @@ feishu:
 
 默认路径：`~/.config/opencode/opencode-notify.yaml`
 
-可通过环境变量 `OPENCODE_NOTIFY_CONFIG` 自定义路径。
-
 ### 配置优先级
 
 ```
-YAML 文件 > plugin options (opencode.json) > 环境变量 > 默认值
+YAML 文件 > plugin options (opencode.json) > 默认值
 ```
 
 ### 全部配置项
@@ -343,17 +378,18 @@ suppress_events_when_active:   # 活跃时抑制哪些事件（不填=默认列�
   - input_required
   # run_failed / run_completed 不在列表中 → 始终通知
 session_stale_timeout_ms: 600000  # 超时会话自动淘汰（毫秒），默认 10 分钟
-debug_log: false               # 写入 ~/.opencode-notify/plugin.log 调试日志（默认 false）
+remote_delay_channels: []        # 远程延迟推送渠道列表（空=不启用）
+                                 # 可选值: system_message, screen_flash, wechat_work, feishu, custom_webhook
+remote_delay_seconds: 60         # 远程延迟秒数（默认 60）
+remote_delay_max_count: 3        # 远程延迟最多重复次数（默认 3）
+log:                             # 日志配置
+  level: info                    #   等级: error | warn | info | debug（默认 info）
+                                 #   error - 仅记录错误
+                                 #   warn  - 错误 + 警告
+                                 #   info  - 错误 + 警告 + 常规信息（推荐）
+                                 #   debug - 全部日志（排查时使用）
+  # file: "~/.opencode-notify/plugin.log"  #   日志文件路径（可选，默认同上）
 ```
-
-### 环境变量
-
-| 变量 | 用途 |
-|------|------|
-| `OPENCODE_NOTIFY_CUSTOM_WEBHOOK_URL` | 覆盖 `custom_webhook.url` |
-| `OPENCODE_NOTIFY_WECHAT_WEBHOOK` | 覆盖 `wechat_work.webhook_url` |
-| `OPENCODE_NOTIFY_FEISHU_WEBHOOK` | 覆盖 `feishu.webhook_url` |
-| `OPENCODE_NOTIFY_CONFIG` | 自定义 YAML 配置文件路径 |
 
 ### 活跃抑制
 
@@ -385,18 +421,31 @@ session_stale_timeout_ms: 600000    # 10 分钟无活动自动淘汰会话（防
 
 ## 日志与故障排查
 
-插件日志位于 `~/.opencode-notify/plugin.log`，默认**关闭**，需在配置中开启：
+插件日志位于 `~/.opencode-notify/plugin.log`（可通过 `log.file` 配置自定义）。
+
+日志等级由 `log.level` 控制：
+
+| 等级 | 包含内容 | 建议用途 |
+|------|---------|---------|
+| `error` | 仅错误 | 生产环境，只关心失败 |
+| `warn` | 错误 + 警告 | 生产环境，关注潜在问题 |
+| `info` | 错误 + 警告 + 常规信息 | 日常运行（默认） |
+| `debug` | 全部日志（含详细事件流） | 排查问题 |
 
 ```yaml
-debug_log: true
+log:
+  level: info                     # 推荐：日常使用记录所有关键信息
+  # level: debug                  # 排查问题时改为 debug
+  # file: "~/.opencode-notify/plugin.log"  # 可选自定义路径
 ```
 
-开启后日志包含：
+日志包含：
 
-- 插件加载信息（配置、已启用渠道）
-- 收到的事件（`[event] type=...`）
-- 匹配到的通知
-- 发送结果
+- 插件加载信息（配置、已启用渠道、日志等级）
+- 渠道发送失败 / 成功
+- 会话活跃跳过通知
+- 远程延迟推送调度 / 取消 / 推送
+- 去重命中、状态存储异常等诊断信息
 
 ```bash
 # 实时查看日志
@@ -405,8 +454,11 @@ tail -f ~/.opencode-notify/plugin.log
 # 查看最近的插件加载信息
 grep "插件已加载" ~/.opencode-notify/plugin.log
 
-# 查看事件流
-grep "\[event\]" ~/.opencode-notify/plugin.log
+# 只看错误
+grep "\[ERROR\]" ~/.opencode-notify/plugin.log
+
+# 只看警告
+grep "\[WARN\]" ~/.opencode-notify/plugin.log
 ```
 
 ### 常见问题
@@ -433,12 +485,18 @@ curl -X POST <webhook_url> -H "Content-Type: application/json" -d '{"msgtype":"m
 opencode-notify/
 ├── index.ts                 # 插件入口
 ├── cli.ts                   # 诊断工具
-├── config.ts                # 配置解析（YAML + options + env）
+├── config.ts                # 配置解析（YAML + plugin options）
 ├── events.ts                # 事件路由
+├── log.ts                   # 共享日志模块
 ├── session-tracker.ts       # 会话感知抑制
+├── terminator-detect.ts     # Terminator 子屏最大化检测
+├── delayed-dispatcher.ts    # 远程延迟推送调度器
 ├── dispatcher.ts            # 去重分发
 ├── store.ts                 # 状态存储
 ├── message.ts               # 消息模型
+├── doc/
+│   ├── de.png                # 跑马灯效果截图
+│   └── features.md           # 功能说明（含 Terminator 友好体验说明）
 ├── scripts/
 │   └── marquee.py           # 屏幕跑马灯效果（Python+GTK）
 ├── senders/

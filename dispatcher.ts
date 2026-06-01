@@ -1,6 +1,7 @@
 import type { Message } from "./message.js"
 import type { Sender } from "./senders/types.js"
 import { FileStore } from "./store.js"
+import { error, warn, info, debug } from "./log.js"
 
 /**
  * 通知分发器
@@ -27,6 +28,7 @@ export class Dispatcher {
 
   async dispatch(msg: Message): Promise<void> {
     if (this.senders.length === 0) {
+      warn(`没有启用的通知渠道，跳过: ${msg.event} 会话=${msg.sessionID}`)
       return
     }
 
@@ -36,8 +38,11 @@ export class Dispatcher {
     // 去重检查 + 预留发送时隙
     const allowed = this.store.reserveSend(key, this.windowSec, now)
     if (!allowed) {
-      return // 去重命中，跳过
+      debug(`去重命中，跳过: ${key}`)
+      return
     }
+
+    info(`分发通知: agent=${msg.agent} event=${msg.event} 会话=${msg.sessionID} 渠道数=${this.senders.length}`)
 
     // 并发发送到所有渠道
     const results = await Promise.allSettled(
@@ -51,19 +56,19 @@ export class Dispatcher {
 
     if (allSuccess) {
       this.store.markSent(key, now)
+      debug(`通知发送成功: ${key}`)
     } else {
       // 有失败 → 释放预留
       this.store.clearReservation(key)
-      // 记录失败（但不抛异常避免影响主流程）
+      let failCount = 0
       for (let i = 0; i < results.length; i++) {
         const r = results[i]
         if (r.status === "rejected") {
-          console.error(
-            `[opencode-notify] sender ${this.senders[i].name} failed:`,
-            r.reason,
-          )
+          failCount++
+          error(`渠道 ${this.senders[i].name} 发送失败: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`)
         }
       }
+      warn(`通知部分失败: ${key} (${failCount}/${this.senders.length} 个渠道失败)`)
     }
   }
 }

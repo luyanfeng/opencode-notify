@@ -25,8 +25,14 @@ import { join } from "node:path"
 // ─── 常量 ───────────────────────────────────────────────────────────────────
 
 const PKG = JSON.parse(readFileSync(join(import.meta.dirname, "package.json"), "utf-8"))
-const LOG_FILE = join(homedir(), ".opencode-notify", "plugin.log")
-const YAML_PATH = process.env.OPENCODE_NOTIFY_CONFIG ?? join(homedir(), ".config", "opencode", "opencode-notify.yaml")
+const DEFAULT_LOG_FILE = join(homedir(), ".opencode-notify", "plugin.log")
+const YAML_PATH = join(homedir(), ".config", "opencode", "opencode-notify.yaml")
+
+/** 读取有效日志文件路径（优先从配置中读取） */
+function getLogFile(): string {
+  const yamlCfg = loadYamlConfig()
+  return yamlCfg?.log?.file ?? DEFAULT_LOG_FILE
+}
 
 const SAMPLE_MSG: Message = {
   agent: "opencode",
@@ -72,7 +78,7 @@ function cmdCheck() {
   // 1. 检查配置文件是否存在
   if (!existsSync(YAML_PATH)) {
     console.log(`\n❌ 配置文件不存在: ${YAML_PATH}`)
-    console.log("   请创建配置文件，或设置 OPENCODE_NOTIFY_CONFIG 环境变量指向正确的路径")
+    console.log("   请创建 ~/.config/opencode/opencode-notify.yaml 配置文件")
     process.exit(1)
   }
   console.log(`\n✅ 配置文件: ${YAML_PATH}`)
@@ -144,6 +150,9 @@ function cmdCheck() {
 
   // 6. 检查活跃抑制
   console.log(`\n🔇 活跃抑制: ${cfg.suppress_when_active ? "开启" : "关闭"} (超时 ${cfg.activity_timeout_ms}ms)`)
+
+  // 6.5 日志配置
+  console.log(`\n📝 日志: 等级=${cfg.log?.level ?? "info"} 文件=${getLogFile()}`)
 
   // 7. 检查去重
   console.log(`\n🔄 去重窗口: ${cfg.dedupe_seconds} 秒`)
@@ -219,17 +228,18 @@ async function cmdTest(channel?: string) {
 // ─── 命令: log ───────────────────────────────────────────────────────────────
 
 function cmdLog(lines: number) {
-  if (!existsSync(LOG_FILE)) {
-    console.log(`日志文件不存在: ${LOG_FILE}`)
+  const logFile = getLogFile()
+  if (!existsSync(logFile)) {
+    console.log(`日志文件不存在: ${logFile}`)
     console.log("插件尚未运行过，或日志已被清理。")
     process.exit(1)
   }
 
-  const stat = statSync(LOG_FILE)
-  const all = readFileSync(LOG_FILE, "utf-8").trimEnd()
+  const stat = statSync(logFile)
+  const all = readFileSync(logFile, "utf-8").trimEnd()
   const entries = all.split("\n")
 
-  console.log(`📄 ${LOG_FILE} (${(stat.size / 1024).toFixed(1)} KB, ${entries.length} 行)\n`)
+  console.log(`📄 ${logFile} (${(stat.size / 1024).toFixed(1)} KB, ${entries.length} 行)\n`)
 
   const tail = entries.slice(-lines)
   for (const line of tail) {
@@ -270,16 +280,17 @@ function cmdInfo() {
   }
 
   // 日志文件
+  const logFile = getLogFile()
   console.log(`\n  📝 日志文件:`)
-  if (existsSync(LOG_FILE)) {
-    const stat = statSync(LOG_FILE)
-    const lines = readFileSync(LOG_FILE, "utf-8").split("\n").length
-    const recent = readFileSync(LOG_FILE, "utf-8").trimEnd().split("\n").slice(-1)[0] ?? ""
-    console.log(`     路径: ${LOG_FILE}`)
+  if (existsSync(logFile)) {
+    const stat = statSync(logFile)
+    const lines = readFileSync(logFile, "utf-8").split("\n").length
+    const recent = readFileSync(logFile, "utf-8").trimEnd().split("\n").slice(-1)[0] ?? ""
+    console.log(`     路径: ${logFile}`)
     console.log(`     大小: ${(stat.size / 1024).toFixed(1)} KB, ${lines} 行`)
     console.log(`     最新: ${recent}`)
   } else {
-    console.log(`     路径: ${LOG_FILE} (暂无日志)`)
+    console.log(`     路径: ${logFile} (暂无日志)`)
   }
 
   // 配置详情
@@ -308,6 +319,7 @@ function cmdInfo() {
 
     console.log(`\n  📋 订阅事件:   ${cfg.events?.join(", ") ?? "(无)"}`)
     console.log(`  🔇 活跃抑制:   ${cfg.suppress_when_active ? "开启" : "关闭"}`)
+    console.log(`  📝 日志等级:   ${cfg.log?.level ?? "info"}`)
     console.log(`  ⏱  去重窗口:   ${cfg.dedupe_seconds} 秒`)
   } else {
     console.log(`\n  ⚠️  未加载到配置`)

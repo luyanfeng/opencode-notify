@@ -70,7 +70,7 @@ opencode-notify 是一个 opencode 通知插件，监听 opencode 会话中的�
 
 ### 3.3 配置方式
 
-插件支持两种配置来源，按优先级：**YAML 文件** > **plugin options** > **环境变量** > **默认值**
+插件支持两种配置来源，按优先级：**YAML 文件** > **plugin options** > **默认值**
 
 #### 方式一：YAML 配置文件（推荐）
 
@@ -119,17 +119,7 @@ activity_timeout_ms: 30000
 }
 ```
 
-#### 环境变量
-
-敏感信息（Webhook URL / Token）支持通过环境变量传入：
-- `OPENCODE_NOTIFY_CUSTOM_WEBHOOK_URL`
-- `OPENCODE_NOTIFY_WECHAT_WEBHOOK`
-- `OPENCODE_NOTIFY_FEISHU_WEBHOOK`
-- `OPENCODE_NOTIFY_CONFIG`（覆盖 YAML 文件路径）
-
-配置优先级：**YAML 文件 > 插件选项 > 环境变量 > 默认值**
-
-### 3.4 去重机制
+#### 方式二：opencode.json plugin tuple（覆盖 YAML）
 
 - 基于复合 key `agent:event:sessionID` 的时间窗口去重
 - 窗口时长可配置（默认 60 秒）
@@ -158,12 +148,11 @@ activity_timeout_ms: 30000
 │  └────────┬────────┘      └──────┬───────┘              │
 │           │                      │                       │
 │           ▼                      ▼                       │
-│  ┌─────────────────────────────────────┐                │
-│  │          Dispatcher                  │                │
-│  │   (dispatcher.ts)                    │                │
-│  │   ├─ 去重检查 (dedup key)            │                │
-│  │   └─ 分发到所有启用的 Sender          │                │
-│  └──────────┬──────────────────────────┘                │
+│  ┌────────────────────────────────────────────────┐     │
+│  │  Dispatcher (dispatcher.ts)                     │     │
+│  │  ├─ 去重检查                                    │     │
+│  │  └─ 分发到所有启用的 Sender                       │     │
+│  └──────────┬─────────────────────────────────────┘     │
 │             │                                            │
 │     ┌───────┼───────────┬────────────────┐              │
 │     ▼       ▼           ▼                ▼              │
@@ -171,6 +160,13 @@ activity_timeout_ms: 30000
 │  │System│ │企业微信│ │ 飞书   │ │ 自定义 Webhook  │      │
 │  │Sender│ │Sender │ │Sender  │ │ Sender          │      │
 │  └──────┘ └──────┘ └────────┘ └────────────────┘      │
+│                                                          │
+│  ┌────────────────────────────────────────────────┐     │
+│  │  DelayedDispatcher (delayed-dispatcher.ts)      │     │
+│  │  ├─ 正常通知发出后，等 remote_delay_seconds 秒    │     │
+│  │  ├─ 用户活跃 → 取消该会话所有待发延迟              │     │
+│  │  └─ 最多重复 remote_delay_max_count 次            │     │
+│  └────────────────────────────────────────────────┘     │
 │                                                          │
 │  ┌─────────────────────────────────────┐                │
 │  │          State Store                 │                │
@@ -191,11 +187,13 @@ opencode-notify/
 ├── message.ts               # Message 类型 + 格式化
 ├── events.ts                # 事件路由：opencode event → Message
 ├── dispatcher.ts            # 去重 + 分发逻辑
+├── delayed-dispatcher.ts    # 远程延迟推送调度器
 ├── store.ts                 # 状态存储（去重记录）
 ├── utils.ts                 # 工具函数
 ├── senders/
 │   ├── types.ts             # Sender 接口定义
-│   ├── system.ts            # 系统通知（平台适配）
+│   ├── system/              # 系统通知（平台分包）
+│   ├── screen-flash/        # 屏幕跑马灯
 │   ├── wechat-work.ts       # 企业微信通知
 │   ├── feishu.ts            # 飞书通知
 │   └── custom-webhook.ts    # 自定义 Webhook
@@ -262,18 +260,24 @@ events.ts 的 route() 判断事件类型
        ├─ 匹配 → 构造 Message { agent, event, sessionID, title, body }
        │
        ▼
-dispatcher.ts 的 dispatch()
+dispatcher.ts 的 dispatch()         ←── 立即发送到所有启用渠道
        │
-       ├─ 1. store.shouldSend(event, sessionID)  → 去重检查
-       │     ├─ 窗口内已发送 → 跳过
-       │     └─ 未发送 → 进入分发
+       ├─ 1. 去重检查
+       ├─ 2. 并发发送到各渠道
+       └─ 3. 标记状态
        │
-       ├─ 2. 遍历启用的 senders
-       │     ├─ sender.send(msg)
-       │     ├─ 成功 → store.markSent()
-       │     └─ 失败 → store.clearReservation() (允许重试)
+       ▼
+delayed-dispatcher.ts 的 schedule()
        │
-       └─ 3. 所有 sender 完成 → 返回
+       ├─ 检查 remote_delay_channels 是否包含匹配渠道
+       │     └─ 空 → 跳过
+       │
+       ├─ 等待 remote_delay_seconds 秒
+       │     ├─ 期间用户活跃 → cancelForSession() 取消所有待发
+       │     ├─ 期间会话删除 → cancelForSession() 取消
+       │     └─ 超时 → 再次发送通知到 remote_delay_channels
+       │
+       └─ 重复最多 remote_delay_max_count 次后停止
 ```
 
 ### 4.5 模块职责详述
@@ -388,6 +392,18 @@ return {
 
 **里程碑**: v1.0.0 发布
 
+### Phase 4: 远程延迟推送
+
+| # | 步骤 | 可交付物 |
+|---|------|---------|
+| 4.1 | 配置项 `remote_delay_channels` / `remote_delay_seconds` / `remote_delay_max_count` | config.ts |
+| 4.2 | `DelayedDispatcher` 模块（延迟调度 + 取消 + 重试计数） | delayed-dispatcher.ts |
+| 4.3 | 集成到 index.ts（立即通知后调度延迟推送，用户活跃/会话删除取消） | index.ts |
+| 4.4 | 文档更新（YAML 模板 + README） | config.ts + README.md |
+| 4.5 | 编译验证 | `tsc --noEmit` |
+
+**里程碑**: 远程延迟推送功能完成，不增加外部依赖
+
 ---
 
 ## 7. 关键设计决策
@@ -415,31 +431,6 @@ opencode 的事件总线有以下与通知相关的事件：
 - 内置 `fs` 做持久化 → 无需 lowdb
 
 **例外**: `js-yaml`（v4.1.1）用于 YAML 配置文件解析。js-yaml 本身零传递依赖，是 Node.js 生态最稳定的 YAML 解析库（2.5B+ 月下载量），引入风险极低。
-
-### 7.3 环境变量退避
-
-```typescript
-function resolveConfig(options: PluginConfig): PluginConfig {
-  return {
-    ...options,
-    channels: {
-      ...options.channels,
-      wechat_work: {
-        ...options.channels.wechat_work,
-        webhook_url: options.channels.wechat_work?.webhook_url
-          || process.env.OPENCODE_NOTIFY_WECHAT_WEBHOOK
-          || ''
-      },
-      feishu: {
-        ...options.channels.feishu,
-        webhook_url: options.channels.feishu?.webhook_url
-          || process.env.OPENCODE_NOTIFY_FEISHU_WEBHOOK
-          || ''
-      }
-    }
-  }
-}
-```
 
 ### 7.4 去重策略
 
