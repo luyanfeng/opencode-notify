@@ -110,64 +110,169 @@ const DEFAULT_CONFIG_TEMPLATE = `# =============================================
 # opencode-notify 配置文件
 # =============================================================================
 # 文件位置: ~/.config/opencode/opencode-notify.yaml
-# 
-# 配置优先级: 此文件 > plugin options > 环境变量 > 默认值
 #
-# 首次运行自动生成，仅启用了系统通知渠道。
-# 其他渠道（企业微信、飞书、自定义 Webhook）可按需取消注释。
+# 配置优先级: 此文件 > plugin options (opencode.json tuple) > 环境变量 > 默认值
 #
-# 完整配置参考: https://github.com/luyanfeng/opencode-notify
+# 环境变量:
+#   OPENCODE_NOTIFY_CUSTOM_WEBHOOK_URL   - 覆盖 custom_webhook.url
+#   OPENCODE_NOTIFY_WECHAT_WEBHOOK       - 覆盖 wechat_work.webhook_url
+#   OPENCODE_NOTIFY_FEISHU_WEBHOOK       - 覆盖 feishu.webhook_url
+#   OPENCODE_NOTIFY_CONFIG               - 自定义配置文件路径
+#
+# 首次运行自动生成，仅启用了系统通知渠道，开箱即用。
+# 其他渠道按需取消注释即可启用。
 # =============================================================================
 
-channels:
-  # 系统消息通知 — 默认启用，开箱即用
-  system_message:
-    enabled: true
 
-  # 屏幕跑马灯 — Linux X11 专用，取消注释启用
+# =============================================================================
+# 通知渠道
+# =============================================================================
+channels:
+
+  # ---------------------------------------------------------------------------
+  # 系统消息通知 (macOS / Linux / Windows)
+  # ---------------------------------------------------------------------------
+  # 弹出 OS 原生通知横幅，开箱即用，无需额外配置。
+  #   macOS  - 使用 osascript (display notification)
+  #   Linux  - 使用 notify-send (需 libnotify 包，桌面版通常预装)
+  #   Windows - 使用 PowerShell New-BurntToastNotification
+  #             (需额外安装 BurntToast 模块)
+  # ---------------------------------------------------------------------------
+  system_message:
+    enabled: true                    # true=启用, false=禁用
+
+  # ---------------------------------------------------------------------------
+  # 屏幕跑马灯 (Linux X11 专用)
+  # ---------------------------------------------------------------------------
+  # 屏幕四边彩色高亮闪烁，作为系统通知之外的视觉辅助。
+  # 使用 Python + PyGObject(GTK 3)，Ubuntu GNOME 桌面内置。
+  # 支持独立配置事件过滤和持续时间/速度/不透明度。
+  # 取消下方注释启用：
+  # ---------------------------------------------------------------------------
   # screen_flash:
   #   enabled: true
-  #   duration: 3.0
-  #   speed: 4.0
-  #   intensity: 0.9
+  #   duration: 3.5                  # 持续秒数
+  #   speed: 5.0                     # 移动速度因子
+  #   intensity: 0.85                # 不透明度 0.0~1.0
 
-  # 企业微信 — 取消注释并填入 webhook_url 启用
+  # ---------------------------------------------------------------------------
+  # 企业微信 群机器人 Webhook
+  # ---------------------------------------------------------------------------
+  # 发送 Markdown 消息到企业微信群聊。
+  # 使用前提：在企业微信群中添加群机器人，获取 Webhook URL。
+  # 文档: https://developer.work.weixin.qq.com/document/path/99110
+  # 取消下方注释并填入 webhook_url 启用：
+  # ---------------------------------------------------------------------------
   # wechat_work:
   #   enabled: true
   #   webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
 
-  # 飞书 — 取消注释并填入 webhook_url 启用
+  # ---------------------------------------------------------------------------
+  # 飞书 自定义机器人 / 流程触发器 Webhook
+  # ---------------------------------------------------------------------------
+  # 发送卡片消息到飞书群聊。
+  # 使用前提：在飞书群中添加自定义机器人，获取 Webhook URL。
+  # 文档: https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot
+  # 取消下方注释并填入 webhook_url 启用：
+  # ---------------------------------------------------------------------------
   # feishu:
   #   enabled: true
   #   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
 
-  # 自定义 Webhook — 取消注释并配置 url 启用
+  # ---------------------------------------------------------------------------
+  # 自定义 Webhook (通用 HTTP POST)
+  # ---------------------------------------------------------------------------
+  # 发送 HTTP 请求到任意 Webhook 服务。
+  # 支持模板插值自动填充消息内容。
+  # 适用服务: Gotify, Bark, PushDeer, Slack Webhook, Discord Webhook 等
+  #
+  # Gotify 配置示例:
+  #   url: "https://gotify.example.com/message"
+  #   method: "POST"
+  #   headers:
+  #     X-Gotify-Key: "your-app-token"
+  #   template: '{"title":"{{title}}","message":"{{body}}","priority":5}'
+  #
+  # 模板占位符: {{title}} {{body}} {{event}} {{agent}} {{sessionID}}
+  # 取消下方注释并配置 url 启用：
+  # ---------------------------------------------------------------------------
   # custom_webhook:
   #   enabled: true
   #   url: ""
-  #   method: "POST"
-  #   headers: {}
-  #   template: ""
+  #   method: "POST"                  # 请求方法: "POST" | "GET"
+  #   headers: {}                     # 自定义请求头
+  #   template: ""                    # 消息模板（JSON 字符串）
 
-# 全局订阅事件（渠道不填则继承此列表）
+
+# =============================================================================
+# 通知事件订阅
+# =============================================================================
+# 只订阅你关心的事件类型，减少不必要通知。
+#
+# 可选事件（各渠道也可单独配置 events 覆盖此全局列表）:
+#   permission_required  - Agent 需要用户授权（如执行命令、读写文件）
+#                          触发: permission.asked / question.asked
+#   input_required       - Agent 等待用户输入
+#                          触发: session.idle / session.status(idle)
+#   run_completed        - 任务执行完成（技术预留，暂未实现）
+#   run_failed           - 任务执行失败
+#                          触发: session.error
+# ---------------------------------------------------------------------------
 events:
+  - permission_required               # 权限请求通知（推荐开启）
+  - input_required                    # 等待输入通知（推荐开启）
+  - run_failed                        # 任务失败通知
+
+
+# =============================================================================
+# 去重设置
+# =============================================================================
+# 同一事件在时间窗口内只发送一次，避免重复骚扰。
+# 去重 key: agent:event:sessionID
+# 例如 60 秒内同一个会话的权限请求不会重复弹通知。
+# ---------------------------------------------------------------------------
+dedupe_seconds: 60                   # 去重时间窗口（秒），0 或负数=不限制
+
+
+# =============================================================================
+# 会话感知抑制
+# =============================================================================
+# 当用户在 opencode TUI 中操作（输入消息、回应权限等），
+# 部分通知可能冗余（屏上已可见）。插件追踪每个会话的操作时间戳，
+# 只对活跃会话按事件类型选择性过滤。
+#
+# 检测的用户活跃事件:
+#   message.updated      - 用户发送了消息
+#   permission.replied   - 用户回应了授权
+#   question.replied     - 用户回答了问题
+#   command.executed     - 用户执行了命令
+#   tui.command.execute  - 用户按键操作 TUI
+#
+# 抑制规则:
+#   permission_required / input_required: 活跃时抑制（屏上可见）
+#   run_failed / run_completed: 始终通知（异步结果，人可能走开）
+# ---------------------------------------------------------------------------
+suppress_when_active: true           # true=开启会话感知抑制, false=不抑制
+activity_timeout_ms: 15000           # 会话操作超时（毫秒）
+                                     # 超过此时间该会话无操作 → 视为不活跃
+                                     # 推荐值: 10000~30000
+suppress_events_when_active:         # 活跃时抑制哪些事件（不填继承默认）
   - permission_required
   - input_required
-  - run_failed
+  # run_failed / run_completed 不在列表中 → 始终通知
+session_stale_timeout_ms: 600000     # 超时会话自动淘汰（毫秒）
+                                     # 10 分钟无任何活动的会话从追踪 Map 移除
+                                     # 防止长期运行导致内存泄漏
 
-# 去重时间窗口（秒），同一事件窗口内不重复发送
-dedupe_seconds: 60
 
-# 会话感知抑制 — 活跃会话跳过屏上可见的通知
-suppress_when_active: true
-activity_timeout_ms: 15000
-suppress_events_when_active:
-  - permission_required
-  - input_required
-session_stale_timeout_ms: 600000
-
-# 调试日志（仅排查问题时开启）
-debug_log: false
+# =============================================================================
+# 调试日志
+# =============================================================================
+# 写入 ~/.opencode-notify/plugin.log。
+# 包含：插件加载信息、收到的事件、匹配到的通知、发送结果。
+# 仅在排查问题时开启，日常使用建议关闭。
+# ---------------------------------------------------------------------------
+debug_log: false                     # true=启用, false=禁用（默认）
 `
 
 /**
