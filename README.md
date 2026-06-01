@@ -435,6 +435,7 @@ opencode-notify/
 ├── cli.ts                   # 诊断工具
 ├── config.ts                # 配置解析（YAML + options + env）
 ├── events.ts                # 事件路由
+├── session-tracker.ts       # 会话感知抑制
 ├── dispatcher.ts            # 去重分发
 ├── store.ts                 # 状态存储
 ├── message.ts               # 消息模型
@@ -442,8 +443,14 @@ opencode-notify/
 │   └── marquee.py           # 屏幕跑马灯效果（Python+GTK）
 ├── senders/
 │   ├── types.ts             # Sender 接口
-│   ├── system.ts            # 系统通知
-│   ├── screen-flash.ts      # 屏幕跑马灯
+│   ├── system/              # 系统通知（平台分包）
+│   │   ├── index.ts         #   注册表 + 自动选择平台
+│   │   ├── darwin.ts        #   macOS (osascript)
+│   │   ├── linux.ts         #   Linux (notify-send)
+│   │   └── win32.ts         #   Windows (PowerShell)
+│   ├── screen-flash/        # 屏幕跑马灯（Linux X11）
+│   │   ├── index.ts         #   入口 + 平台守卫
+│   │   └── linux.ts         #   Linux 实现 (Python+GTK)
 │   ├── custom-webhook.ts    # 自定义 Webhook
 │   ├── wechat-work.ts       # 企业微信
 │   └── feishu.ts            # 飞书

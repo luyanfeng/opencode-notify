@@ -14,7 +14,7 @@
 import { loadYamlConfig, resolveConfig, mergeConfig } from "./config.js"
 import type { PluginConfig, ChannelsConfig } from "./config.js"
 import type { Message } from "./message.js"
-import { SystemSender } from "./senders/system.js"
+import { SystemSender } from "./senders/system/index.js"
 import { CustomWebhookSender } from "./senders/custom-webhook.js"
 import { WechatWorkSender } from "./senders/wechat-work.js"
 import { FeishuSender } from "./senders/feishu.js"
