@@ -24,7 +24,7 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 - 多渠道通知：系统通知、企业微信、飞书、自定义 Webhook（Gotify / Bark / PushDeer 等）
 - YAML 配置文件，每项参数均有详细注释
 - 去重机制：同一事件在时间窗口内不重复发送
-- 活跃抑制：检测到用户在操作 TUI 时可自动跳过通知
+- 会话感知抑制：活跃会话按事件类型智能过滤，不遗漏 `run_failed` 等重要通知
 - 零外部运行时依赖（仅 js-yaml 用于配置解析）
 - **屏幕跑马灯**：通知时屏幕四边高亮闪烁（Linux X11，Python + GTK 内置）
 - **渠道级事件过滤**：每个渠道可独立配置监听哪些事件，灵活分流
@@ -336,8 +336,13 @@ events:                        # 订阅的事件列表
                                  # 可选值: permission_required | input_required | run_completed | run_failed
 
 dedupe_seconds: 60             # 去重时间窗口（秒）
-suppress_when_active: false    # 用户活跃时是否跳过通知
-activity_timeout_ms: 30000     # 活跃超时判定（毫秒）
+suppress_when_active: true     # 会话感知抑制开关（按 suppress_events 列表过滤）
+activity_timeout_ms: 15000     # 会话活跃超时（毫秒），超过此时间无操作视为离开
+suppress_events_when_active:   # 活跃时抑制哪些事件（不填=默认列表）
+  - permission_required
+  - input_required
+  # run_failed / run_completed 不在列表中 → 始终通知
+session_stale_timeout_ms: 600000  # 超时会话自动淘汰（毫秒），默认 10 分钟
 debug_log: false               # 写入 ~/.opencode-notify/plugin.log 调试日志（默认 false）
 ```
 
@@ -352,12 +357,30 @@ debug_log: false               # 写入 ~/.opencode-notify/plugin.log 调试日�
 
 ### 活跃抑制
 
-当用户正在操作 TUI（发消息、翻页、回应权限等），说明人在屏幕前，可跳过通知。
-检测事件：`message.updated` / `permission.replied` / `question.replied` / `command.executed` / `tui.command.execute`
+当用户正在 opencode TUI 中操作（输入消息、回应权限等），通知可能冗余（屏上已可见）。
+插件通过**会话感知抑制**解决：追踪每个会话的用户操作时间戳，活跃会话按事件类型选择性过滤。
+
+**检测的用户操作事件：**
+`message.updated` / `permission.replied` / `question.replied` / `command.executed` / `tui.command.execute`
+
+**抑制规则：**
+
+| 通知事件 | 活跃时默认行为 | 理由 |
+|---------|:------------:|------|
+| `permission_required` | ✅ 抑制 | 权限弹窗就在屏幕上 |
+| `input_required` | ✅ 抑制 | TUI 明确在等输入 |
+| `run_failed` | ❌ 不抑制 | 异步结果，人可能走开 |
+| `run_completed` | ❌ 不抑制 | 同上 |
+
+**配置示例：**
 
 ```yaml
-suppress_when_active: true     # 开启抑制
-activity_timeout_ms: 30000     # 30 秒无操作视为离开
+suppress_when_active: true          # 开启会话感知抑制
+activity_timeout_ms: 15000          # 15 秒无操作视为不活跃
+suppress_events_when_active:        # 活跃时抑制哪些事件
+  - permission_required
+  - input_required
+session_stale_timeout_ms: 600000    # 10 分钟无活动自动淘汰会话（防内存泄漏）
 ```
 
 ## 日志与故障排查

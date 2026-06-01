@@ -10,6 +10,7 @@ import { CustomWebhookSender } from "./senders/custom-webhook.js"
 import { WechatWorkSender } from "./senders/wechat-work.js"
 import { FeishuSender } from "./senders/feishu.js"
 import { FilteredSender } from "./senders/types.js"
+import { SessionTracker } from "./session-tracker.js"
 import { writeFileSync, mkdirSync, existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, dirname } from "node:path"
@@ -37,13 +38,19 @@ function log(msg: string) {
   }
 }
 
-// 用户活跃事件类型
+// 用户活跃事件类型（这些事件表明用户正在操作 opencode 的某个会话）
 const USER_ACTIVITY_EVENTS = new Set([
   "message.updated",
   "permission.replied",
   "question.replied",
   "command.executed",
   "tui.command.execute",
+])
+
+// 应追踪会话生命周期的事件（不产生通知，仅更新会话状态）
+const SESSION_LIFECYCLE_EVENTS = new Set([
+  "session.created",
+  "session.deleted",
 ])
 
 const plugin: Plugin = async (_input, options) => {
@@ -55,12 +62,13 @@ const plugin: Plugin = async (_input, options) => {
   const store = new FileStore()
   const senders = buildSenders(cfg)
   const dispatcher = new Dispatcher(store, cfg.dedupe_seconds ?? 60, senders)
-  // 用户活跃追踪
-  let lastActivity = Date.now()
-  const suppressActive = cfg.suppress_when_active ?? true
-  const activityTimeout = cfg.activity_timeout_ms ?? 30_000
 
-  log(`插件已加载, debug_log=${cfg.debug_log}, events=${JSON.stringify(cfg.events)}, suppressActive=${suppressActive}, timeout=${activityTimeout}ms`)
+  // 会话感知抑制
+  const tracker = new SessionTracker(cfg.session_stale_timeout_ms)
+
+  log(`插件已加载, debug_log=${cfg.debug_log}, events=${JSON.stringify(cfg.events)}, `
+    + `suppressActive=${cfg.suppress_when_active}, timeout=${cfg.activity_timeout_ms}ms, `
+    + `suppressEvents=${JSON.stringify(cfg.suppress_events_when_active)}`)
 
   return {
     // event 总线 — 所有事件通过此钩子
@@ -71,26 +79,47 @@ const plugin: Plugin = async (_input, options) => {
       // 调试日志：记录所有事件（随时可关闭）
       log(`[event] type=${type} keys=${propKeys}`)
 
-      // 用户活跃事件追踪
+      const sessionID = properties?.sessionID ?? "unknown"
+
+      // === 更新会话追踪状态 ===
+
+      // 用户操作事件 → 标记该会话活跃
       if (USER_ACTIVITY_EVENTS.has(type)) {
-        lastActivity = Date.now()
-        log(`→ 用户活跃事件, 重置活跃时间`)
+        tracker.markActivity(sessionID)
+        log(`→ 用户活跃事件, 会话=${sessionID}`)
       }
 
-      // 活跃抑制检查
-      if (suppressActive) {
-        const idleMs = Date.now() - lastActivity
-        if (idleMs < activityTimeout) {
-          // 用户活跃中，跳过通知
+      // 会话生命周期事件
+      if (type === "session.created") {
+        tracker.register(sessionID)
+        log(`→ 会话已创建, 会话=${sessionID}`)
+      }
+      if (type === "session.deleted") {
+        tracker.remove(sessionID)
+        log(`→ 会话已删除, 会话=${sessionID}`)
+      }
+
+      // === 通知判定 ===
+
+      const suppressEvents = cfg.suppress_events_when_active ?? []
+
+      // 先路由事件，看是否匹配通知
+      const msg = route(event, cfg.events)
+      if (!msg) return  // 不关心的事件
+
+      log(`→ 匹配通知: ${msg.event}`)
+
+      // 会话感知抑制判定
+      if (cfg.suppress_when_active && suppressEvents.includes(msg.event)) {
+        const active = tracker.isSessionActive(sessionID, cfg.activity_timeout_ms ?? 15000)
+        if (active) {
+          log(`→ 会话 ${sessionID} 活跃中，跳过通知 (${msg.event})`)
           return
         }
       }
 
-      const msg = route(event, cfg.events)
-      if (msg) {
-        log(`→ 匹配通知: ${msg.event}`)
-        await dispatcher.dispatch(msg)
-      }
+      // 调度发送
+      await dispatcher.dispatch(msg)
     },
   }
 }

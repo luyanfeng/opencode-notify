@@ -24,11 +24,26 @@ const EVENT_LABELS: Record<string, string> = {
 }
 
 /**
- * 格式化通知标题
+ * 截短会话 ID 便于阅读
  */
-export function formatTitle(event: string): string {
+function shortSession(sessionID: string): string {
+  if (!sessionID || sessionID === "unknown") return "未知"
+  return sessionID.length > 11
+    ? sessionID.slice(0, 11) + "…"
+    : sessionID
+}
+
+/**
+ * 格式化通知标题
+ * @param event 事件类型
+ * @param sessionID 会话 ID（可选，传入后在标题前加会话标签）
+ */
+export function formatTitle(event: string, sessionID?: string): string {
   const label = EVENT_LABELS[event] ?? event
-  return `opencode - ${label}`
+  const prefix = sessionID && sessionID !== "unknown"
+    ? `[${shortSession(sessionID)}] `
+    : ""
+  return `${prefix}opencode - ${label}`
 }
 
 /**
@@ -47,4 +62,26 @@ export function defaultBody(event: string): string {
     default:
       return `事件: ${event}`
   }
+}
+
+/**
+ * 格式化结构化通知正文
+ *
+ * 输出格式：
+ *   事件：权限请求
+ *   会话：ses_abc1234
+ *   详情：Agent 需要授权
+ *   时间：2026-05-31 15:30:00
+ */
+export function formatBody(msg: Message): string {
+  const now = new Date()
+  const time = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`
+  const eventLabel = EVENT_LABELS[msg.event] ?? msg.event
+
+  return [
+    `事件：${eventLabel}`,
+    `会话：${shortSession(msg.sessionID)}`,
+    `详情：${msg.body}`,
+    `时间：${time}`,
+  ].join("\n")
 }

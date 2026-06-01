@@ -64,13 +64,30 @@ export interface PluginConfig {
   /** 去重时间窗口（秒），默认 60 */
   dedupe_seconds?: number
   /**
-   * 当用户活跃（正在操作 TUI）时抑制通知
-   * 检测的事件：message.updated / permission.replied / question.replied / command.executed / tui.command.execute
+   * 会话感知抑制开关
+   * true  → 会话活跃时按 suppress_events_when_active 列表过滤通知
+   * false → 不抑制（旧行为，所有事件都通知）
    * @default true
    */
   suppress_when_active?: boolean
-  /** 用户活跃超时时间（毫秒），超过此时间无操作视为离开 */
+  /**
+   * 会话操作超时（毫秒）
+   * 超过此时间无操作 → 视为不活跃，不再抑制通知
+   * @default 15000
+   */
   activity_timeout_ms?: number
+  /**
+   * 活跃时抑制哪些事件
+   * 空数组表示不抑制任何事件（仅跟踪会话，不影响通知）
+   * @default ["permission_required", "input_required"]
+   */
+  suppress_events_when_active?: string[]
+  /**
+   * 超时会话自动淘汰（毫秒）
+   * 会话超过此时间无任何活动 → 从追踪 Map 移除（防内存泄漏）
+   * @default 600000 (10 分钟)
+   */
+  session_stale_timeout_ms?: number
   /** 写入 ~/.opencode-notify/plugin.log 调试日志，默认 false */
   debug_log?: boolean
 }
@@ -121,7 +138,7 @@ export function mergeConfig(base: PluginConfig, overrides: PluginConfig): Plugin
 }
 
 /** 默认配置 */
-const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "activity_timeout_ms" | "debug_log">> & PluginConfig = {
+const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "activity_timeout_ms" | "suppress_events_when_active" | "session_stale_timeout_ms" | "debug_log">> & PluginConfig = {
   channels: {
     system_message: { enabled: true },
     screen_flash: { enabled: false },
@@ -137,7 +154,9 @@ const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "acti
   ],
   dedupe_seconds: 60,
   suppress_when_active: true,
-  activity_timeout_ms: 30_000,
+  activity_timeout_ms: 15_000,
+  suppress_events_when_active: ["permission_required", "input_required"],
+  session_stale_timeout_ms: 600_000,
   debug_log: false,
 }
 
@@ -212,6 +231,8 @@ export function resolveConfig(options: PluginConfig): PluginConfig {
     dedupe_seconds: options.dedupe_seconds ?? DEFAULT_CONFIG.dedupe_seconds,
     suppress_when_active: options.suppress_when_active ?? DEFAULT_CONFIG.suppress_when_active,
     activity_timeout_ms: options.activity_timeout_ms ?? DEFAULT_CONFIG.activity_timeout_ms,
+    suppress_events_when_active: options.suppress_events_when_active ?? DEFAULT_CONFIG.suppress_events_when_active,
+    session_stale_timeout_ms: options.session_stale_timeout_ms ?? DEFAULT_CONFIG.session_stale_timeout_ms,
     debug_log: options.debug_log ?? DEFAULT_CONFIG.debug_log,
   }
 }
