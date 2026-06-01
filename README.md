@@ -13,7 +13,7 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 > - Linux 系统通知需 `libnotify` 包（桌面发行版通常预装）
 > - 事件映射基于 @opencode-ai/plugin@1.15.12 的行为，后续版本升级可能影响兼容性
 > - `run_completed` 事件暂未实现（opencode 无直接完成事件）
-> - 屏幕跑马灯效果：Linux X11（Python + PyGObject）/ Windows（PowerShell + WinForms）四边彩色流动
+> - 屏幕跑马灯效果：Ubuntu 24.04 X11（Python + PyGObject）/ Windows（PowerShell + WinForms）四边彩色流动
 > - 仅在 Ubuntu 24.04 (X11) 环境下测试并使用，其它平台未验证
 >
 > 如有问题欢迎提 Issue，但不保证及时响应和修复。
@@ -26,7 +26,7 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 - 去重机制：同一事件在时间窗口内不重复发送
 - 会话感知抑制：活跃会话按事件类型智能过滤，不遗漏 `run_failed` 等重要通知
 - 零外部运行时依赖（仅 js-yaml 用于配置解析）
-- **屏幕跑马灯**：通知时屏幕四边高亮闪烁（Linux X11，Python + GTK 内置；Windows 实验性，PowerShell + WinForms）
+- **屏幕跑马灯**：通知时屏幕四边高亮闪烁（Ubuntu 24.04 X11，Python + GTK 内置；Windows，PowerShell + WinForms）
 - **渠道级事件过滤**：每个渠道可独立配置监听哪些事件，灵活分流
 - **远程延迟推送**：正常通知发出后，指定渠道额外延迟推送以防遗漏
 - **Terminator 子屏检测**：自动检测子屏最大化场景，被遮挡的会话强制通知
@@ -39,13 +39,13 @@ opencode 通知插件 — 监听会话中的关键事件，通过多渠道推送
 | 自定义 Webhook / 企业微信 / 飞书 | ✅ | ✅ | ✅ |
 | 诊断 CLI (`bun cli.ts`) | ✅ | ✅ | ✅ |
 | **系统消息通知** | ✅ `osascript` 内置 | ⚠️ 需 `libnotify` 包 | ⚠️ 需 BurntToast 模块 |
-| **屏幕跑马灯** | ❌ | ✅ Python+GTK 内置 | ✅ PowerShell+WinForms |
+| **屏幕跑马灯** | ❌ | ✅ Ubuntu 24.04 X11 | ✅ PowerShell+WinForms |
 
 **说明：**
 - **macOS**: 系统通知使用 `osascript`，系统内置，开箱即用
 - **Linux**: 系统通知使用 `notify-send`，来自 `libnotify`。桌面发行版通常预装，如缺失可 `apt install libnotify-bin` / `yum install libnotify`
 - **Windows**: 系统通知使用 PowerShell `New-BurntToastNotification`，需额外安装 [BurntToast](https://github.com/Windos/BurntToast) 模块。Webhook 渠道不受影响
-- **屏幕跑马灯**: Linux X11 使用 Python + PyGObject(GTK 3) 创建透明覆盖窗口，60fps 彩色四边跑马灯动画；Windows 使用 PowerShell + .NET WinForms 创建屏幕四边彩色闪烁边框（实验性）。中间完全透明可点击穿透，不影响操作。macOS 暂不支持
+- **屏幕跑马灯**: Ubuntu 24.04 X11 使用 Python + PyGObject(GTK 3) 创建透明覆盖窗口，60fps 彩色四边跑马灯动画；Windows 使用 PowerShell + .NET WinForms 创建屏幕四边彩色闪烁边框，中间完全透明可点击穿透，不影响操作。macOS 暂不支持
 - 非系统通知模块（Webhook 推送、CLI 诊断）均为纯 HTTP/Node API，全平台一致
 
 > **已测试渠道：** 系统通知、企业微信、自定义 Webhook（Gotify）。飞书等其他渠道理论可用，暂未做验证。
@@ -115,8 +115,17 @@ events:
   - run_failed
 
 dedupe_seconds: 60
-suppress_when_active: false
-activity_timeout_ms: 30000
+suppress_when_active: true
+activity_timeout_ms: 15000
+suppress_events_when_active:
+  - permission_required
+  - input_required
+session_stale_timeout_ms: 600000
+remote_delay_channels: []
+remote_delay_seconds: 60
+remote_delay_max_count: 3
+log:
+  level: info
 ```
 
 ## 通知渠道
@@ -158,7 +167,7 @@ custom_webhook:
 ![跑马灯效果](doc/de.png)
 
 - 独立渠道，可与系统通知分开启停、分开配置事件过滤
-- Linux X11: 使用 Python + PyGObject(GTK 3) 创建透明覆盖窗口，60fps 彩色灯光沿四边循环运动
+- Ubuntu 24.04 X11: 使用 Python + PyGObject(GTK 3) 创建透明覆盖窗口，60fps 彩色灯光沿四边循环运动
 - Windows: 使用 PowerShell + .NET WinForms 创建屏幕四边彩色闪烁边框（8px 宽），中间完全透明可点击穿透，不阻挡任何操作
 - 非阻塞执行，不影响通知发送速度
 
@@ -335,7 +344,7 @@ channels:
     enabled: true              # 系统通知开关
     events: []                 # 可选，渠道级事件过滤（不填继承全局）
                                # 可选值: permission_required | input_required | run_completed | run_failed
-  screen_flash:              # 屏幕跑马灯（仅 Linux X11）
+  screen_flash:              # 屏幕跑马灯（Ubuntu 24.04 X11 + Windows）
     enabled: true            #   开启（默认 false）
     events: []               #   可选，渠道级事件过滤（不填继承全局）
                              #   可选值: permission_required | input_required | run_completed | run_failed
@@ -505,7 +514,7 @@ opencode-notify/
 │   │   ├── darwin.ts        #   macOS (osascript)
 │   │   ├── linux.ts         #   Linux (notify-send)
 │   │   └── win32.ts         #   Windows (PowerShell)
-│   ├── screen-flash/        # 屏幕跑马灯（Linux + Windows）
+│   ├── screen-flash/        # 屏幕跑马灯（Ubuntu 24.04 X11 + Windows）
 │   │   ├── index.ts         #   入口 + 平台路由
 │   │   ├── linux.ts         #   Linux 实现 (Python+GTK)
 │   │   └── win32.ts         #   Windows 实现 (PowerShell+WinForms)
