@@ -12,7 +12,7 @@ opencode-notify 是一个 opencode 通知插件，监听会话中的关键事件
 
 | 渠道 | 适用场景 | 要求 |
 |------|---------|------|
-| 系统通知 | 本地桌面开发，弹 OS 原生通知横幅 | Linux: `notify-send` / macOS: 内置 / Windows: BurntToast |
+| 系统通知 | 本地桌面开发，弹 OS 原生通知横幅 | Linux: `notify-send` / macOS: 内置 / Windows: 开箱即用 |
 | 屏幕跑马灯 | 人不在屏幕前时，通过余光感知有通知（屏幕四边高亮闪烁） | Linux: Python + GTK / Windows: PowerShell + WinForms |
 | 企业微信 | 团队协作，通知发到企微群 | 企微群机器人 Webhook |
 | 飞书 | 团队协作，通知发到飞书群 | 飞书自定义机器人 Webhook |
@@ -108,41 +108,85 @@ Terminator 是一款支持在同一窗口中分多个子屏幕的终端模拟器
 
 ### 解决方案
 
-插件通过 DBus 自动检测这个场景：
+插件通过两级检测识别遮挡场景：
 
 ```
-检测到抑制信号
+事件被活跃抑制
   ↓
-确认运行在 Terminator 中（检测 $TERMINATOR_UUID）
-  ↓
-DBus 查询当前焦点在哪个子屏幕（get_focused_terminal）
-  ↓
-焦点 != 本屏 → 本屏幕被遮挡 → 强制通知！
-  ↓
-即使会话活跃也发出通知
+① Terminator 窗口是当前 X 活跃窗口？     ← xdotool + xprop (WM_CLASS)
+  否 → 用户在别的应用中（浏览器/IDE）→ 强制通知
+  ↓ 是
+② 用户聚焦的是哪个子屏？               ← DBus get_focused_terminal
+  聚焦 == 本屏 → 不遮挡（用户正在看这个屏）
+  聚焦 != 本屏 → 遮挡（用户在另一个子屏上）
 ```
 
 ### 友好体验
 
 | 场景 | 行为 |
 |------|------|
-| 正常分屏，各看各的 | ✅ 正常抑制，不打扰 |
-| 最大化子屏，挡住另一个 | ✅ 被遮挡的屏幕强制通知 |
+| 本屏聚焦操作 | ✅ 正常抑制，不打扰 |
+| 用户在另一个子屏上（分屏或最大化） | ✅ 强制通知（用户可能看不到本屏内容） |
 | 不在 Terminator 中（普通终端、SSH 等） | ✅ 正常抑制，不受影响 |
-| Terminator 检测工具未安装 | ✅ 静默降级，正常抑制 |
+| Terminator 窗口不活跃（切到浏览器） | ✅ 强制通知 |
+| 检测工具未安装 | ✅ 静默降级，正常抑制 |
 
 **不需要任何配置**，在 Terminator 中自动生效。
 
 ### 技术原理
 
 - 利用 Terminator 在每个子终端中设置的 `$TERMINATOR_UUID` 环境变量确定身份
-- 利用 `$TERMINATOR_DBUS_NAME` 和 `$TERMINATOR_DBUS_PATH` 连接 DBus
-- 调用 `get_focused_terminal` 获取用户当前操作的子终端 UUID
-- 比较 UUID：不一致 → 本屏被遮挡
+- **第一级**: 通过 `xprop -id $(xdotool getactivewindow) WM_CLASS` 检测 Terminator 窗口是否是当前 X 活跃窗口
+- **第二级**: 通过 DBus 的 `get_focused_terminal` 获取当前聚焦子屏的 UUID，与本屏对比
+- **判断**: 只要用户不在本屏上操作，就视为遮挡并强制通知
+
+### 已知问题
+
+当前 Terminator 版本未暴露 `get_maximized_terminal` DBus 接口（Terminator 内部没有为子屏窗口注册独立的 DBus 对象），因此**无法区分"分屏可见"和"最大化遮挡"**：
+
+| 场景 | 期望 | 实际行为 | 原因 |
+|------|:----:|:--------:|------|
+| 分屏，切到另一个子屏（未最大化） | 不通知（另一个屏也可见） | ❌ 通知 | 无法判断是否最大化 |
+| 最大化另一个子屏，本屏被隐藏 | 通知 | ✅ 通知 | 聚焦 != 本屏 → 通知 |
+
+**影响：** 即使另一个子屏在分屏模式下可见，切换过去也会触发通知。如果你经常在分屏间切换且不想被干扰，可调整以下配置缓解：
+
+```yaml
+# 延长活跃超时，让会话更快进入"不活跃"状态
+# 这样即使切屏，等到会话变成不活跃后抑制自动消失
+activity_timeout_ms: 5000       # 5 秒（默认 15 秒）
+# 或关闭某些事件的活跃抑制
+suppress_events_when_active: [] # 空列表 = 不抑制任何事件
+# 或完全关闭会话感知抑制
+suppress_when_active: false     # 所有事件都通知
+```
 
 ---
 
-## 5. 远程延迟推送
+## 5. 屏幕跑马灯
+
+### 解决的问题
+
+系统通知横幅可能不够醒目——尤其是当你离开座位或专注于另一块屏幕时。屏幕跑马灯在通知时将屏幕四边点亮，通过余光即可感知有通知到来。
+
+### 实现
+
+- **Ubuntu 24.04 X11**: 使用 Python + PyGObject(GTK 3) 创建透明覆盖窗口，60fps 彩色灯光沿四边循环运动
+- **Windows**: 使用 PowerShell + .NET WinForms 创建 8px 宽的彩色闪烁边框，中间完全透明可点击穿透
+
+### 配置
+
+```yaml
+screen_flash:
+  enabled: true
+  duration: 3.0       # 持续秒数（默认 3.0）
+  speed: 4.0          # 移动速度因子（默认 4.0）
+  intensity: 0.9      # 不透明度 0.0~1.0（默认 0.9）
+```
+
+---
+
+## 6. 远程延迟推送
 
 ### 解决的问题
 
@@ -189,7 +233,7 @@ remote_delay_max_count: 3     # 最多重复 3 次
 
 ---
 
-## 6. 去重
+## 7. 去重
 
 同一事件（`agent:event:sessionID`）在时间窗口内只发送一次，避免重复骚扰。
 
@@ -199,7 +243,7 @@ dedupe_seconds: 60    # 60 秒内不重复发送
 
 ---
 
-## 7. 灵活的事件订阅
+## 8. 灵活的事件订阅
 
 只订阅你关心的事件类型：
 
@@ -219,7 +263,7 @@ events:
 
 ---
 
-## 8. 日志系统
+## 9. 日志系统
 
 四级日志，满足从日常监视到深度排查的各种需求：
 
@@ -238,6 +282,13 @@ events:
 # 本地桌面弹通知
 system_message:
   enabled: true
+
+# 屏幕跑马灯视觉提醒
+screen_flash:
+  enabled: true
+  duration: 3.0
+  speed: 4.0
+  intensity: 0.9
 
 # 远程推送到手机
 wechat_work:
