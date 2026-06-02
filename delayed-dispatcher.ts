@@ -98,12 +98,23 @@ export class DelayedDispatcher {
   }
 
   /**
+   * 将毫秒转换为人类可读的间隔描述
+   * 例: 30_000 → "30秒", 120_000 → "2分钟", 3_600_000 → "60分钟"
+   */
+  private formatInterval(ms: number): string {
+    const sec = Math.round(ms / 1000)
+    if (sec < 60) return `${sec}秒`
+    const min = Math.round(sec / 60)
+    return `${min}分钟`
+  }
+
+  /**
    * 在通知正文追加或替换延迟推送标记
    *
    * 清除正文末尾已有的旧标记行，追加最新标记。
    * 标记格式：
    *   ─────────────────
-   *   ⚠️ 延迟推送 第2/3次（下次约 15:31:00）
+   *   ⚠️ 延迟 第2/3次（下次约 15:31:00 / 2分钟后）
    */
   private markDelayBody(body: string, current: number, total: number, nextDelayMs: number): string {
     // 移除旧标记（从末尾 ─── 分隔线到最后）
@@ -111,10 +122,10 @@ export class DelayedDispatcher {
     if (current < total) {
       const next = new Date(Date.now() + nextDelayMs)
       const t = `${String(next.getHours()).padStart(2, "0")}:${String(next.getMinutes()).padStart(2, "0")}:${String(next.getSeconds()).padStart(2, "0")}`
-      return `${clean}\n─────────────────\n⚠️ 延迟推送 第${current}/${total}次（下次约 ${t}）`
+      return `${clean}\n─────────────────\n⚠️ 延迟 第${current}/${total}次（下次约 ${t} / ${this.formatInterval(nextDelayMs)}后）`
     }
     // 最后一次推送，不显示下次时间
-    return `${clean}\n─────────────────\n⚠️ 延迟推送 第${current}/${total}次（最终）`
+    return `${clean}\n─────────────────\n⚠️ 延迟 第${current}/${total}次（最终）`
   }
 
   /**
