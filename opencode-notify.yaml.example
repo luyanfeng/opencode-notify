@@ -23,9 +23,14 @@ channels:
   #   Linux  - 使用 notify-send (需 libnotify 包，桌面版通常预装)
   #   Windows - 使用 PowerShell New-BurntToastNotification
   #             (需额外安装 BurntToast 模块)
+  #
+  # mode 可选值:
+  #   all         → 即时通知 + 延迟推送（默认）
+  #   delay_only  → 仅用于远程延迟推送，不弹即时通知
+  #   none        → 禁用
   # ---------------------------------------------------------------------------
   system_message:
-    enabled: true                    # true=启用, false=禁用
+    mode: all                        # all | delay_only | none
 
   # ---------------------------------------------------------------------------
   # 屏幕跑马灯 (Linux X11 专用)
@@ -36,7 +41,7 @@ channels:
   # 取消下方注释启用：
   # ---------------------------------------------------------------------------
   # screen_flash:
-  #   enabled: true
+  #   mode: all                      # all | delay_only | none
   #   duration: 3.5                  # 持续秒数
   #   speed: 5.0                     # 移动速度因子
   #   intensity: 0.85                # 不透明度 0.0~1.0
@@ -50,7 +55,7 @@ channels:
   # 取消下方注释并填入 webhook_url 启用：
   # ---------------------------------------------------------------------------
   # wechat_work:
-  #   enabled: true
+  #   mode: all                      # all | delay_only | none
   #   webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
 
   # ---------------------------------------------------------------------------
@@ -62,7 +67,7 @@ channels:
   # 取消下方注释并填入 webhook_url 启用：
   # ---------------------------------------------------------------------------
   # feishu:
-  #   enabled: true
+  #   mode: all                      # all | delay_only | none
   #   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
 
   # ---------------------------------------------------------------------------
@@ -83,7 +88,7 @@ channels:
   # 取消下方注释并配置 url 启用：
   # ---------------------------------------------------------------------------
   # custom_webhook:
-  #   enabled: true
+  #   mode: all                      # all | delay_only | none
   #   url: ""
   #   method: "POST"                  # 请求方法: "POST" | "GET"
   #   headers: {}                     # 自定义请求头

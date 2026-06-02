@@ -20,6 +20,8 @@ export interface SessionInfo {
   lastActivity: number
   /** 会话创建时间 */
   createdAt: number
+  /** 会话标题（用户输入的问题/任务描述） */
+  title?: string
 }
 
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000  // 5 分钟
@@ -69,15 +71,24 @@ export class SessionTracker {
   }
 
   /** 注册新会话 */
-  register(sessionID: string): void {
+  register(sessionID: string, title?: string): void {
     if (sessionID === "unknown") return
-    if (!this.sessions.has(sessionID)) {
+    const existing = this.sessions.get(sessionID)
+    if (existing) {
+      if (title) existing.title = title
+    } else {
       this.sessions.set(sessionID, {
         sessionID,
         lastActivity: Date.now(),
         createdAt: Date.now(),
+        title,
       })
     }
+  }
+
+  /** 获取会话标题 */
+  getSessionTitle(sessionID: string): string | undefined {
+    return this.sessions.get(sessionID)?.title
   }
 
   /** 移除会话 */

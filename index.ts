@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 import type { PluginConfig } from "./config.js"
 import { resolveConfig, loadYamlConfig, mergeConfig, ensureConfigFile } from "./config.js"
 import { route } from "./events.js"
+import { enrich } from "./message.js"
 import { Dispatcher } from "./dispatcher.js"
 import { FileStore } from "./store.js"
 import { SystemSender } from "./senders/system/index.js"
@@ -85,8 +86,9 @@ const plugin: Plugin = async (_input, options) => {
 
       // 会话生命周期事件
       if (type === "session.created") {
-        tracker.register(sessionID)
-        debug(`→ 会话已创建, 会话=${sessionID}`)
+        const title = properties.info?.title
+        tracker.register(sessionID, title)
+        debug(`→ 会话已创建, 会话=${sessionID}${title ? ` title="${title}"` : ""}`)
       }
       if (type === "session.deleted") {
         tracker.remove(sessionID)
@@ -102,7 +104,11 @@ const plugin: Plugin = async (_input, options) => {
       const msg = route(event, cfg.events)
       if (!msg) return  // 不关心的事件
 
-      debug(`→ 匹配通知: ${msg.event}`)
+      // 注入会话标题（任务描述），增强通知内容
+      const sessionTitle = tracker.getSessionTitle(sessionID)
+      enrich(msg, sessionTitle)
+
+      debug(`→ 匹配通知: ${msg.event}${sessionTitle ? ` sessionTitle="${sessionTitle}"` : ""}`)
 
       // 会话感知抑制判定
       let shouldSuppress = cfg.suppress_when_active && suppressEvents.includes(msg.event)
@@ -121,7 +127,10 @@ const plugin: Plugin = async (_input, options) => {
       }
 
       if (shouldSuppress) {
-        info(`→ 会话 ${sessionID} 活跃中，跳过通知 (${msg.event})`)
+        info(`→ 会话 ${sessionID} 活跃中，跳过即时通知 (${msg.event})`)
+        // 仍调度延迟推送：用户可能在电脑前屏上可见所以抑制，
+        // 但万一用户已离开电脑，延迟推送能在用户未回来时再次提醒
+        delayedDispatcher?.schedule(msg)
         return
       }
 
@@ -140,50 +149,57 @@ interface BuildSendersResult {
   senderMap: Map<string, import("./senders/types.js").Sender>
 }
 
-function addSender(
-  senders: import("./senders/types.js").Sender[],
-  sender: import("./senders/types.js").Sender,
-  events: string[],
-  label: string,
-  extra?: string,
-): import("./senders/types.js").Sender {
-  const filtered = new FilteredSender(sender, events)
-  senders.push(filtered)
-  const evt = events.length < 6 ? `events=${JSON.stringify(events)}` : `events=${events.length}个`
-  info(`${label}已启用 (${evt})${extra ? `, ${extra}` : ""}`)
-  return filtered
-}
-
 function buildSenders(cfg: PluginConfig): BuildSendersResult {
   const senders: import("./senders/types.js").Sender[] = []
   const senderMap = new Map<string, import("./senders/types.js").Sender>()
   const globalEvents = cfg.events ?? []
 
-  if (cfg.channels?.system_message?.enabled) {
-    const events = cfg.channels.system_message.events ?? globalEvents
-    const s = addSender(senders, new SystemSender(), events, "系统通知")
-    senderMap.set("system_message", s)
+  /**
+   * 注册渠道发送器
+   * @param key      渠道键名
+   * @param mode     渠道模式
+   * @param chEvents 渠道级事件过滤
+   * @param create   创建原始 Sender 的回调
+   * @param label    日志标签
+   */
+  function register(
+    key: string,
+    mode: string | undefined,
+    chEvents: string[] | undefined,
+    create: () => import("./senders/types.js").Sender,
+    label: string,
+  ): void {
+    if (mode === "none" || !mode) return  // 禁用
+
+    const evts = chEvents ?? globalEvents
+    const raw = create()
+    const filtered = new FilteredSender(raw, evts)
+
+    if (mode === "delay_only") {
+      // 仅延迟推送：不进 senders[]，只入 senderMap
+      senderMap.set(key, filtered)
+      info(`${label}已启用 (delay_only, 仅延迟推送)`)
+    } else {
+      // all：即时通知 + 延迟推送
+      senders.push(filtered)
+      senderMap.set(key, filtered)
+      const evtStr = evts.length < 6 ? `events=${JSON.stringify(evts)}` : `events=${evts.length}个`
+      info(`${label}已启用 (${evtStr})`)
+    }
   }
-  if (cfg.channels?.screen_flash?.enabled) {
-    const events = cfg.channels.screen_flash.events ?? globalEvents
-    const s = addSender(senders, new ScreenFlashSender(cfg.channels.screen_flash), events, "屏幕跑马灯")
-    senderMap.set("screen_flash", s)
-  }
-  if (cfg.channels?.custom_webhook?.enabled && cfg.channels.custom_webhook.url) {
-    const events = cfg.channels.custom_webhook.events ?? globalEvents
-    const s = addSender(senders, new CustomWebhookSender(cfg.channels.custom_webhook), events, "自定义 Webhook")
-    senderMap.set("custom_webhook", s)
-  }
-  if (cfg.channels?.wechat_work?.enabled && cfg.channels.wechat_work.webhook_url) {
-    const events = cfg.channels.wechat_work.events ?? globalEvents
-    const s = addSender(senders, new WechatWorkSender(cfg.channels.wechat_work), events, "企业微信")
-    senderMap.set("wechat_work", s)
-  }
-  if (cfg.channels?.feishu?.enabled && cfg.channels.feishu.webhook_url) {
-    const events = cfg.channels.feishu.events ?? globalEvents
-    const s = addSender(senders, new FeishuSender(cfg.channels.feishu), events, "飞书")
-    senderMap.set("feishu", s)
-  }
+
+  const ch = cfg.channels
+  register("system_message", ch?.system_message?.mode, ch?.system_message?.events,
+    () => new SystemSender(), "系统通知")
+  register("screen_flash", ch?.screen_flash?.mode, ch?.screen_flash?.events,
+    () => new ScreenFlashSender(ch?.screen_flash!), "屏幕跑马灯")
+  register("custom_webhook", ch?.custom_webhook?.mode, ch?.custom_webhook?.events,
+    () => new CustomWebhookSender(ch?.custom_webhook!), "自定义 Webhook")
+  register("wechat_work", ch?.wechat_work?.mode, ch?.wechat_work?.events,
+    () => new WechatWorkSender(ch?.wechat_work!), "企业微信")
+  register("feishu", ch?.feishu?.mode, ch?.feishu?.events,
+    () => new FeishuSender(ch?.feishu!), "飞书")
+
   return { senders, senderMap }
 }
 

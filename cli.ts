@@ -105,7 +105,7 @@ function cmdCheck() {
   let hasError = false
 
   for (const [name, ch] of Object.entries(channels)) {
-    if (!ch || !ch.enabled) continue
+    if (!ch || !ch.mode || ch.mode === "none") continue
 
     switch (name) {
       case "system":
@@ -177,23 +177,25 @@ async function cmdTest(channel?: string) {
     allChannels.push([name, enabled, sender])
   }
 
-  add("system_message", !!(channels.system_message?.enabled), async () => {
+  const modeOk = (m: string | undefined): boolean => m !== undefined && m !== "none"
+
+  add("system_message", modeOk(channels.system_message?.mode), async () => {
     await new SystemSender().send(SAMPLE_MSG)
   })
 
-  if (channels.custom_webhook?.enabled && channels.custom_webhook.url) {
+  if (modeOk(channels.custom_webhook?.mode) && channels.custom_webhook?.url) {
     add("custom_webhook", true, async () => {
       await new CustomWebhookSender(channels.custom_webhook!).send(SAMPLE_MSG)
     })
   }
 
-  if (channels.wechat_work?.enabled && channels.wechat_work.webhook_url) {
+  if (modeOk(channels.wechat_work?.mode) && channels.wechat_work?.webhook_url) {
     add("wechat_work", true, async () => {
       await new WechatWorkSender(channels.wechat_work!).send(SAMPLE_MSG)
     })
   }
 
-  if (channels.feishu?.enabled && channels.feishu.webhook_url) {
+  if (modeOk(channels.feishu?.mode) && channels.feishu?.webhook_url) {
     add("feishu", true, async () => {
       await new FeishuSender(channels.feishu!).send(SAMPLE_MSG)
     })
@@ -303,13 +305,13 @@ function cmdInfo() {
     console.log(`\n  🔔 通知渠道:`)
     const channelNames: [string, any, string][] = [
       ["系统消息", ch.system_message, ""],
-      ["屏幕跑马灯", ch.screen_flash, ch.screen_flash?.enabled ? `强度${ch.screen_flash.intensity ?? 0.9}` : ""],
+      ["屏幕跑马灯", ch.screen_flash, ch.screen_flash?.mode !== "none" ? `强度${ch.screen_flash?.intensity ?? 0.9}` : ""],
       ["自定义 Webhook", ch.custom_webhook, ch.custom_webhook?.url ?? ""],
       ["企业微信", ch.wechat_work, ch.wechat_work?.webhook_url ? `${ch.wechat_work.webhook_url.slice(0, 40)}...` : ""],
       ["飞书", ch.feishu, ch.feishu?.webhook_url ? `${ch.feishu.webhook_url.slice(0, 40)}...` : ""],
     ]
     for (const [label, config, url] of channelNames) {
-      if (config?.enabled) {
+      if (config?.mode !== "none") {
         const urlInfo = url ? ` ${url}` : ""
         console.log(`     ✅ ${label}${urlInfo}`)
       } else {

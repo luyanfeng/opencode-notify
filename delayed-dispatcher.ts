@@ -97,6 +97,26 @@ export class DelayedDispatcher {
   }
 
   /**
+   * 在通知正文追加或替换延迟推送标记
+   *
+   * 清除正文末尾已有的旧标记行，追加最新标记。
+   * 标记格式：
+   *   ─────────────────
+   *   ⚠️ 延迟推送 第2/3次（下次约 15:31:00）
+   */
+  private markDelayBody(body: string, current: number, total: number, delayMs: number): string {
+    // 移除旧标记（从末尾 ─── 分隔线到最后）
+    const clean = body.replace(/\n─{3,}[\s\S]*$/, "")
+    if (current < total) {
+      const next = new Date(Date.now() + delayMs)
+      const t = `${String(next.getHours()).padStart(2, "0")}:${String(next.getMinutes()).padStart(2, "0")}:${String(next.getSeconds()).padStart(2, "0")}`
+      return `${clean}\n─────────────────\n⚠️ 延迟推送 第${current}/${total}次（下次约 ${t}）`
+    }
+    // 最后一次推送，不显示下次时间
+    return `${clean}\n─────────────────\n⚠️ 延迟推送 第${current}/${total}次（最终）`
+  }
+
+  /**
    * 调度单次延迟发送
    */
   private scheduleOne(sid: string, ch: string, msg: Message): void {
@@ -107,6 +127,10 @@ export class DelayedDispatcher {
 
     entry.timeoutId = setTimeout(() => {
       entry.timeoutId = null
+
+      // 在正文追加延迟标记（第几次 / 共几次 / 间隔秒数）
+      const sendCount = entry.count + 1  // 1-based
+      msg.body = this.markDelayBody(msg.body, sendCount, this.maxCount, this.delayMs)
 
       // 发送延迟通知
       const sender = this.senders.get(ch)

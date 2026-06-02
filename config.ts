@@ -1,6 +1,14 @@
+/**
+ * 渠道模式
+ * - "all"         → 即时通知 + 延迟推送都启用
+ * - "delay_only"  → 仅用于延迟推送（不弹即时通知）
+ * - "none"        → 禁用
+ */
+export type ChannelMode = "all" | "delay_only" | "none"
+
 /** 通知渠道配置 */
 export interface ChannelConfig {
-  enabled: boolean
+  mode: ChannelMode
   /**
    * 渠道级事件过滤 — 仅这些事件触发本渠道通知
    * 不填或留空则继承全局 events
@@ -171,9 +179,14 @@ channels:
   #   Linux  - 使用 notify-send (需 libnotify 包，桌面版通常预装)
   #   Windows - 使用 PowerShell New-BurntToastNotification
   #             (需额外安装 BurntToast 模块)
+  #
+  # mode 可选值:
+  #   all         → 即时通知 + 延迟推送（默认）
+  #   delay_only  → 仅用于远程延迟推送，不弹即时通知
+  #   none        → 禁用
   # ---------------------------------------------------------------------------
   system_message:
-    enabled: true                    # true=启用, false=禁用
+    mode: all                        # all | delay_only | none
 
   # ---------------------------------------------------------------------------
   # 屏幕跑马灯 (Linux X11 专用)
@@ -184,7 +197,7 @@ channels:
   # 取消下方注释启用：
   # ---------------------------------------------------------------------------
   # screen_flash:
-  #   enabled: true
+  #   mode: all                      # all | delay_only | none
   #   duration: 3.5                  # 持续秒数
   #   speed: 5.0                     # 移动速度因子
   #   intensity: 0.85                # 不透明度 0.0~1.0
@@ -198,7 +211,7 @@ channels:
   # 取消下方注释并填入 webhook_url 启用：
   # ---------------------------------------------------------------------------
   # wechat_work:
-  #   enabled: true
+  #   mode: all                      # all | delay_only | none
   #   webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
 
   # ---------------------------------------------------------------------------
@@ -210,7 +223,7 @@ channels:
   # 取消下方注释并填入 webhook_url 启用：
   # ---------------------------------------------------------------------------
   # feishu:
-  #   enabled: true
+  #   mode: all                      # all | delay_only | none
   #   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
 
   # ---------------------------------------------------------------------------
@@ -231,7 +244,7 @@ channels:
   # 取消下方注释并配置 url 启用：
   # ---------------------------------------------------------------------------
   # custom_webhook:
-  #   enabled: true
+  #   mode: all                      # all | delay_only | none
   #   url: ""
   #   method: "POST"                  # 请求方法: "POST" | "GET"
   #   headers: {}                     # 自定义请求头
@@ -383,11 +396,11 @@ export function mergeConfig(base: PluginConfig, overrides: PluginConfig): Plugin
 /** 默认配置 */
 const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "activity_timeout_ms" | "suppress_events_when_active" | "session_stale_timeout_ms" | "remote_delay_seconds" | "remote_delay_max_count">> & PluginConfig = {
   channels: {
-    system_message: { enabled: true },
-    screen_flash: { enabled: false },
-    wechat_work: { enabled: false },
-    feishu: { enabled: false },
-    custom_webhook: { enabled: false },
+    system_message: { mode: "all" },
+    screen_flash: { mode: "none" },
+    wechat_work: { mode: "none" },
+    feishu: { mode: "none" },
+    custom_webhook: { mode: "none" },
   },
   events: [
     "permission_required",
@@ -421,39 +434,39 @@ export function resolveConfig(options: PluginConfig): PluginConfig {
   return {
     channels: {
       system_message: {
-        enabled:
-          options.channels?.system_message?.enabled ??
-          DEFAULT_CONFIG.channels!.system_message!.enabled,
+        mode:
+          options.channels?.system_message?.mode ??
+          DEFAULT_CONFIG.channels!.system_message!.mode,
         events: chEvents(options.channels?.system_message),
       },
       screen_flash: {
-        enabled:
-          options.channels?.screen_flash?.enabled ??
-          DEFAULT_CONFIG.channels!.screen_flash!.enabled,
+        mode:
+          options.channels?.screen_flash?.mode ??
+          DEFAULT_CONFIG.channels!.screen_flash!.mode,
         duration: options.channels?.screen_flash?.duration,
         speed: options.channels?.screen_flash?.speed,
         intensity: options.channels?.screen_flash?.intensity,
         events: chEvents(options.channels?.screen_flash),
       },
       wechat_work: {
-        enabled:
-          options.channels?.wechat_work?.enabled ??
-          DEFAULT_CONFIG.channels!.wechat_work!.enabled,
+        mode:
+          options.channels?.wechat_work?.mode ??
+          DEFAULT_CONFIG.channels!.wechat_work!.mode,
         webhook_url: options.channels?.wechat_work?.webhook_url || undefined,
         events: chEvents(options.channels?.wechat_work),
       },
       feishu: {
-        enabled:
-          options.channels?.feishu?.enabled ??
-          DEFAULT_CONFIG.channels!.feishu!.enabled,
+        mode:
+          options.channels?.feishu?.mode ??
+          DEFAULT_CONFIG.channels!.feishu!.mode,
         webhook_url: options.channels?.feishu?.webhook_url || undefined,
         events: chEvents(options.channels?.feishu),
       },
       custom_webhook: {
-        enabled:
-          options.channels?.custom_webhook?.enabled ??
-          DEFAULT_CONFIG.channels?.custom_webhook?.enabled ??
-          false,
+        mode:
+          options.channels?.custom_webhook?.mode ??
+          DEFAULT_CONFIG.channels?.custom_webhook?.mode ??
+          "none",
         url: options.channels?.custom_webhook?.url || undefined,
         method: options.channels?.custom_webhook?.method ?? "POST",
         headers: options.channels?.custom_webhook?.headers,

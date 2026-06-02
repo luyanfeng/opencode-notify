@@ -47,18 +47,6 @@ export class FeishuSender implements Sender {
             tag: "markdown",
             content: msg.body,
           },
-          {
-            tag: "hr",
-          },
-          {
-            tag: "note",
-            elements: [
-              {
-                tag: "plain_text",
-                content: `会话: ${msg.sessionID}`,
-              },
-            ],
-          },
         ],
       },
     })

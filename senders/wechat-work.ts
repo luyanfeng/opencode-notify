@@ -33,12 +33,11 @@ export class WechatWorkSender implements Sender {
       throw new Error("wechat_work: webhook_url not configured")
     }
 
-    // 构造 markdown 内容
+    // 构造 markdown 内容（msg.body 已包含事件/会话/详情/时间/延迟标记）
     const content = [
       `**${msg.title}**`,
       "",
       msg.body,
-      `> 会话: ${msg.sessionID}`,
     ].join("\n")
 
     const body = JSON.stringify({

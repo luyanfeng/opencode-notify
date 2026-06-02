@@ -28,9 +28,7 @@ const EVENT_LABELS: Record<string, string> = {
  */
 function shortSession(sessionID: string): string {
   if (!sessionID || sessionID === "unknown") return "未知"
-  return sessionID.length > 11
-    ? sessionID.slice(0, 11) + "…"
-    : sessionID
+  return sessionID
 }
 
 /**
@@ -38,12 +36,9 @@ function shortSession(sessionID: string): string {
  * @param event 事件类型
  * @param sessionID 会话 ID（可选，传入后在标题前加会话标签）
  */
-export function formatTitle(event: string, sessionID?: string): string {
+export function formatTitle(event: string, _sessionID?: string): string {
   const label = EVENT_LABELS[event] ?? event
-  const prefix = sessionID && sessionID !== "unknown"
-    ? `[${shortSession(sessionID)}] `
-    : ""
-  return `${prefix}opencode - ${label}`
+  return `opencode - ${label}`
 }
 
 /**
@@ -84,4 +79,30 @@ export function formatBody(msg: Message): string {
     `详情：${msg.body}`,
     `时间：${time}`,
   ].join("\n")
+}
+
+/** 截断标题到指定长度 */
+function shortTitle(title: string, maxLen = 20): string {
+  if (title.length <= maxLen) return title
+  return title.slice(0, maxLen - 1) + "…"
+}
+
+/**
+ * 增强通知消息：注入会话标题
+ *
+ * - 标题：`[短标题] 事件标签`（替换 `opencode - 事件标签`）
+ * - 正文：追加一行 `任务：完整标题`
+ *
+ * @param msg 原始通知消息
+ * @param sessionTitle 会话标题（用户输入的问题/任务描述），为空则不增强
+ * @returns 增强后的消息（原地修改并返回）
+ */
+export function enrich(msg: Message, sessionTitle?: string): Message {
+  if (!sessionTitle) return msg
+
+  const label = EVENT_LABELS[msg.event] ?? msg.event
+  msg.title = `[${shortTitle(sessionTitle)}] ${label}`
+  // 用"任务"行替换"详情"行（详情的事件细节在会话标题下显得冗余）
+  msg.body = msg.body.replace(/^详情：.*$/m, `任务：${sessionTitle}`)
+  return msg
 }
