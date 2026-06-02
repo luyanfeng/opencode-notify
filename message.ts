@@ -91,21 +91,29 @@ function shortTitle(title: string, maxLen = 20): string {
 }
 
 /**
- * 增强通知消息：注入会话标题
+ * 增强通知消息：注入会话上下文
  *
- * - 标题：`[短标题] 事件标签`（替换 `opencode - 事件标签`）
- * - 正文：追加一行 `任务：完整标题`
+ * - 标题：`[主题] 事件标签`（替换 `opencode - 事件标签`）
+ * - 正文：用 `主题` / `任务` 行替换 `详情` 行
  *
  * @param msg 原始通知消息
- * @param sessionTitle 会话标题（用户输入的问题/任务描述），为空则不增强
+ * @param userPrompt 用户输入的问题/任务描述（创建时捕获）
+ * @param sessionTopic opencode 自动生成的会话主题
  * @returns 增强后的消息（原地修改并返回）
  */
-export function enrich(msg: Message, sessionTitle?: string): Message {
-  if (!sessionTitle) return msg
+export function enrich(msg: Message, userPrompt?: string, sessionTopic?: string): Message {
+  if (!userPrompt && !sessionTopic) return msg
 
+  // 标题优先用主题（更简洁），无主题则用用户提示词
+  const title = sessionTopic ?? userPrompt
   const label = EVENT_LABELS[msg.event] ?? msg.event
-  msg.title = `[${shortTitle(sessionTitle)}] ${label}`
-  // 用"任务"行替换"详情"行（详情的事件细节在会话标题下显得冗余）
-  msg.body = msg.body.replace(/^详情：.*$/m, `任务：${sessionTitle}`)
+  msg.title = `[${shortTitle(title!)}] ${label}`
+
+  // 替换"详情"行，按可用字段生成上下文行
+  const lines: string[] = []
+  if (sessionTopic) lines.push(`主题：${sessionTopic}`)
+  if (userPrompt) lines.push(`任务：${userPrompt}`)
+  // 如果两者都为空（前面 return 了）不可能到这里
+  msg.body = msg.body.replace(/^详情：.*$/m, lines.join("\n"))
   return msg
 }

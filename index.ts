@@ -86,9 +86,14 @@ const plugin: Plugin = async (_input, options) => {
 
       // 会话生命周期事件
       if (type === "session.created") {
-        const title = properties.info?.title
-        tracker.register(sessionID, title)
-        debug(`→ 会话已创建, 会话=${sessionID}${title ? ` title="${title}"` : ""}`)
+        const userPrompt = properties.info?.title
+        tracker.register(sessionID, userPrompt)
+        debug(`→ 会话已创建, 会话=${sessionID}${userPrompt ? ` userPrompt="${userPrompt}"` : ""}`)
+      }
+      if (type === "session.updated") {
+        const topic = properties.info?.title
+        tracker.updateTopic(sessionID, topic)
+        debug(`→ 会话已更新, 会话=${sessionID}${topic ? ` topic="${topic}"` : ""}`)
       }
       if (type === "session.deleted") {
         tracker.remove(sessionID)
@@ -104,11 +109,12 @@ const plugin: Plugin = async (_input, options) => {
       const msg = route(event, cfg.events)
       if (!msg) return  // 不关心的事件
 
-      // 注入会话标题（任务描述），增强通知内容
-      const sessionTitle = tracker.getSessionTitle(sessionID)
-      enrich(msg, sessionTitle)
+      // 注入会话主题和任务描述，增强通知内容
+      const userPrompt = tracker.getUserPrompt(sessionID)
+      const sessionTopic = tracker.getSessionTopic(sessionID)
+      enrich(msg, userPrompt, sessionTopic)
 
-      debug(`→ 匹配通知: ${msg.event}${sessionTitle ? ` sessionTitle="${sessionTitle}"` : ""}`)
+      debug(`→ 匹配通知: ${msg.event} sessionTopic="${sessionTopic ?? ""}" userPrompt="${userPrompt ?? ""}"`)
 
       // 会话感知抑制判定
       let shouldSuppress = cfg.suppress_when_active && suppressEvents.includes(msg.event)

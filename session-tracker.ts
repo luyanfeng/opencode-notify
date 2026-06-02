@@ -20,8 +20,10 @@ export interface SessionInfo {
   lastActivity: number
   /** 会话创建时间 */
   createdAt: number
-  /** 会话标题（用户输入的问题/任务描述） */
-  title?: string
+  /** 用户输入的问题/任务描述（创建时捕获） */
+  userPrompt?: string
+  /** opencode 自动生成的会话主题（session.updated 时更新） */
+  sessionTopic?: string
 }
 
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000  // 5 分钟
@@ -71,24 +73,45 @@ export class SessionTracker {
   }
 
   /** 注册新会话 */
-  register(sessionID: string, title?: string): void {
+  register(sessionID: string, userPrompt?: string): void {
     if (sessionID === "unknown") return
     const existing = this.sessions.get(sessionID)
     if (existing) {
-      if (title) existing.title = title
+      if (userPrompt) existing.userPrompt = userPrompt
     } else {
       this.sessions.set(sessionID, {
         sessionID,
         lastActivity: Date.now(),
         createdAt: Date.now(),
-        title,
+        userPrompt,
       })
     }
   }
 
-  /** 获取会话标题 */
-  getSessionTitle(sessionID: string): string | undefined {
-    return this.sessions.get(sessionID)?.title
+  /** 更新会话主题（opencode 自动生成，来自 session.updated） */
+  updateTopic(sessionID: string, topic: string): void {
+    if (sessionID === "unknown" || !topic) return
+    const existing = this.sessions.get(sessionID)
+    if (existing) {
+      existing.sessionTopic = topic
+    } else {
+      this.sessions.set(sessionID, {
+        sessionID,
+        lastActivity: Date.now(),
+        createdAt: Date.now(),
+        sessionTopic: topic,
+      })
+    }
+  }
+
+  /** 获取用户提示词 */
+  getUserPrompt(sessionID: string): string | undefined {
+    return this.sessions.get(sessionID)?.userPrompt
+  }
+
+  /** 获取会话主题 */
+  getSessionTopic(sessionID: string): string | undefined {
+    return this.sessions.get(sessionID)?.sessionTopic
   }
 
   /** 移除会话 */
