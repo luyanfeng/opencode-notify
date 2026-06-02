@@ -105,16 +105,27 @@ export class DelayedDispatcher {
    *   ─────────────────
    *   ⚠️ 延迟推送 第2/3次（下次约 15:31:00）
    */
-  private markDelayBody(body: string, current: number, total: number, delayMs: number): string {
+  private markDelayBody(body: string, current: number, total: number, nextDelayMs: number): string {
     // 移除旧标记（从末尾 ─── 分隔线到最后）
     const clean = body.replace(/\n─{3,}[\s\S]*$/, "")
     if (current < total) {
-      const next = new Date(Date.now() + delayMs)
+      const next = new Date(Date.now() + nextDelayMs)
       const t = `${String(next.getHours()).padStart(2, "0")}:${String(next.getMinutes()).padStart(2, "0")}:${String(next.getSeconds()).padStart(2, "0")}`
       return `${clean}\n─────────────────\n⚠️ 延迟推送 第${current}/${total}次（下次约 ${t}）`
     }
     // 最后一次推送，不显示下次时间
     return `${clean}\n─────────────────\n⚠️ 延迟推送 第${current}/${total}次（最终）`
+  }
+
+  /**
+   * 根据已发送次数计算本次延迟
+   *
+   * 指数退避：base × 2^count，上限 10 分钟
+   * count=0 → base, count=1 → base×2, count=2 → base×4, ...
+   */
+  private getDelayMs(count: number): number {
+    const max = 600_000  // 10 分钟上限
+    return Math.min(this.delayMs * Math.pow(2, count), max)
   }
 
   /**
@@ -125,6 +136,8 @@ export class DelayedDispatcher {
     if (!chMap) return
     const entry = chMap.get(ch)
     if (!entry) return
+
+    const currentDelay = this.getDelayMs(entry.count)
 
     entry.timeoutId = setTimeout(() => {
       entry.timeoutId = null
@@ -138,7 +151,8 @@ export class DelayedDispatcher {
 
       // 在正文追加延迟标记（第几次 / 共几次 / 下次时间）
       const sendCount = entry.count + 1  // 1-based
-      msg.body = this.markDelayBody(msg.body, sendCount, this.maxCount, this.delayMs)
+      const nextDelay = this.getDelayMs(entry.count + 1)
+      msg.body = this.markDelayBody(msg.body, sendCount, this.maxCount, nextDelay)
 
       // 发送延迟通知
       const sender = this.senders.get(ch)
@@ -153,7 +167,7 @@ export class DelayedDispatcher {
       entry.count++
       if (entry.count < this.maxCount) {
         this.scheduleOne(sid, ch, msg)
-        debug(`远程延迟: 重试 ${entry.count}/${this.maxCount} 会话=${sid} 渠道=${ch}`)
+        debug(`远程延迟: 重试 ${entry.count}/${this.maxCount} 会话=${sid} 渠道=${ch} 下次延迟=${this.getDelayMs(entry.count)}ms`)
       } else {
         // 达到最大次数，清理
         chMap.delete(ch)
@@ -162,6 +176,6 @@ export class DelayedDispatcher {
         }
         info(`远程延迟: 已完成 会话=${sid} 渠道=${ch} (推送${entry.count}次)`)
       }
-    }, this.delayMs)
+    }, currentDelay)
   }
 }
