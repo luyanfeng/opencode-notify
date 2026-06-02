@@ -1,6 +1,7 @@
 import type { Message } from "./message.js"
 import type { Sender } from "./senders/types.js"
 import { error, warn, info, debug } from "./log.js"
+import { isTerminalOccluded } from "./terminator-detect.js"
 
 /**
  * 远程延迟通知调度器
@@ -128,7 +129,14 @@ export class DelayedDispatcher {
     entry.timeoutId = setTimeout(() => {
       entry.timeoutId = null
 
-      // 在正文追加延迟标记（第几次 / 共几次 / 间隔秒数）
+      // 发送前检查：如果终端子屏可见（用户已回到电脑前），取消本会话的所有待发延迟
+      if (isTerminalOccluded() === false) {
+        info(`远程延迟: 用户已回到终端，取消会话=${sid} 的延迟推送`)
+        this.cancelForSession(sid)
+        return
+      }
+
+      // 在正文追加延迟标记（第几次 / 共几次 / 下次时间）
       const sendCount = entry.count + 1  // 1-based
       msg.body = this.markDelayBody(msg.body, sendCount, this.maxCount, this.delayMs)
 

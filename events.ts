@@ -71,14 +71,27 @@ export function route(
     )
   }
 
-  // 会话错误 → run_failed
-  if (type === "session.error" && enabled.has("run_failed")) {
+  // 会话错误 → run_cancelled / run_failed
+  // MessageAbortedError = 用户主动中断（Ctrl+C 或点击中断按钮）
+  // 其他错误类型 = 真实失败
+  if (type === "session.error") {
     const err = properties.error
-    const errMsg = err?.message ?? err?.name ?? defaultBody("run_failed")
-    return makeMsg(
-      "run_failed",
-      `错误: ${truncate(String(errMsg), 200)}`,
-    )
+    // 检查是否是用户取消
+    if (err?.name === "MessageAbortedError" && enabled.has("run_cancelled")) {
+      const msg = err?.data?.message ?? ""
+      return makeMsg(
+        "run_cancelled",
+        msg ? `用户中断: ${truncate(msg, 200)}` : defaultBody("run_cancelled"),
+      )
+    }
+    // 真实失败
+    if (enabled.has("run_failed")) {
+      const errMsg = err?.data?.message ?? err?.name ?? defaultBody("run_failed")
+      return makeMsg(
+        "run_failed",
+        `错误: ${truncate(String(errMsg), 200)}`,
+      )
+    }
   }
 
   // 会话空闲 → input_required

@@ -75,6 +75,7 @@ export interface PluginConfig {
    *   input_required       - Agent 等待用户输入
    *   run_completed        - 任务执行完成（技术预留，暂未实现）
    *   run_failed           - 任务执行失败
+   *   run_cancelled        - 用户主动中断任务
    */
   events?: string[]
   /** 去重时间窗口（秒），默认 60 */
@@ -267,11 +268,14 @@ channels:
 #   run_completed        - 任务执行完成（技术预留，暂未实现）
 #   run_failed           - 任务执行失败
 #                          触发: session.error
+#   run_cancelled        - 用户主动中断任务（Ctrl+C 或点击中断按钮）
+#                          触发: session.error (MessageAbortedError)
 # ---------------------------------------------------------------------------
 events:
   - permission_required               # 权限请求通知（推荐开启）
   - input_required                    # 等待输入通知（推荐开启）
   - run_failed                        # 任务失败通知
+  - run_cancelled                     # 用户取消通知（推荐开启）
 
 
 # =============================================================================
@@ -300,7 +304,7 @@ dedupe_seconds: 60                   # 去重时间窗口（秒），0 或负数
 #
 # 抑制规则:
 #   permission_required / input_required: 活跃时抑制（屏上可见）
-#   run_failed / run_completed: 始终通知（异步结果，人可能走开）
+#   run_failed / run_completed / run_cancelled: 始终通知（异步结果，人可能走开）
 # ---------------------------------------------------------------------------
 suppress_when_active: true           # true=开启会话感知抑制, false=不抑制
 activity_timeout_ms: 15000           # 会话操作超时（毫秒）
@@ -309,7 +313,7 @@ activity_timeout_ms: 15000           # 会话操作超时（毫秒）
 suppress_events_when_active:         # 活跃时抑制哪些事件（不填继承默认）
   - permission_required
   - input_required
-  # run_failed / run_completed 不在列表中 → 始终通知
+  # run_failed / run_completed / run_cancelled 不在列表中 → 始终通知
 session_stale_timeout_ms: 600000     # 超时会话自动淘汰（毫秒）
                                      # 10 分钟无任何活动的会话从追踪 Map 移除
                                      # 防止长期运行导致内存泄漏
@@ -416,6 +420,7 @@ const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "acti
     "input_required",
     "run_completed",
     "run_failed",
+    "run_cancelled",
   ],
   dedupe_seconds: 60,
   suppress_when_active: true,

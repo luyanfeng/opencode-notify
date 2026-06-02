@@ -111,11 +111,14 @@ channels:
 #   run_completed        - 任务执行完成（技术预留，暂未实现）
 #   run_failed           - 任务执行失败
 #                          触发: session.error
+#   run_cancelled        - 用户主动中断任务（Ctrl+C 或点击中断按钮）
+#                          触发: session.error (MessageAbortedError)
 # ---------------------------------------------------------------------------
 events:
   - permission_required               # 权限请求通知（推荐开启）
   - input_required                    # 等待输入通知（推荐开启）
   - run_failed                        # 任务失败通知
+  - run_cancelled                     # 用户取消通知（推荐开启）
 
 
 # =============================================================================
@@ -144,7 +147,7 @@ dedupe_seconds: 60                   # 去重时间窗口（秒），0 或负数
 #
 # 抑制规则:
 #   permission_required / input_required: 活跃时抑制（屏上可见）
-#   run_failed / run_completed: 始终通知（异步结果，人可能走开）
+#   run_failed / run_completed / run_cancelled: 始终通知（异步结果，人可能走开）
 # ---------------------------------------------------------------------------
 suppress_when_active: true           # true=开启会话感知抑制, false=不抑制
 activity_timeout_ms: 15000           # 会话操作超时（毫秒）

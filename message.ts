@@ -20,6 +20,7 @@ const EVENT_LABELS: Record<string, string> = {
   input_required: "等待输入",
   run_completed: "任务完成",
   run_failed: "任务失败",
+  run_cancelled: "用户取消",
   session_idle: "会话空闲",
 }
 
@@ -54,6 +55,8 @@ export function defaultBody(event: string): string {
       return "任务执行完成"
     case "run_failed":
       return "任务执行失败"
+    case "run_cancelled":
+      return "用户主动中断了任务"
     default:
       return `事件: ${event}`
   }
