@@ -92,7 +92,7 @@ export interface PluginConfig {
    * 超过此时间无操作 → 视为不活跃，不再抑制通知
    * @default 15000
    */
-  activity_timeout_ms?: number
+  activity_timeout?: number
   /**
    * 活跃时抑制哪些事件
    * 空数组表示不抑制任何事件（仅跟踪会话，不影响通知）
@@ -312,9 +312,9 @@ dedupe_seconds: 60                   # 去重时间窗口（秒），0 或负数
 #   run_failed / run_completed / run_cancelled: 始终通知（异步结果，人可能走开）
 # ---------------------------------------------------------------------------
 suppress_when_active: true           # true=开启会话感知抑制, false=不抑制
-activity_timeout_ms: 15000           # 会话操作超时（毫秒）
-                                     # 超过此时间该会话无操作 → 视为不活跃
-                                     # 推荐值: 10000~30000
+activity_timeout: 60                 # 会话操作超时（秒）
+                                      # 超过此时间该会话无操作 → 视为不活跃
+                                      # AI 推理可能耗时较长，建议设为 60~120
 suppress_events_when_active:         # 活跃时抑制哪些事件（不填继承默认）
   - permission_required
   - input_required
@@ -412,7 +412,7 @@ export function mergeConfig(base: PluginConfig, overrides: PluginConfig): Plugin
 }
 
 /** 默认配置 */
-const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "activity_timeout_ms" | "suppress_events_when_active" | "session_stale_timeout_ms" | "remote_delay_seconds" | "remote_delay_max_count">> & PluginConfig = {
+const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "activity_timeout" | "suppress_events_when_active" | "session_stale_timeout_ms" | "remote_delay_seconds" | "remote_delay_max_count">> & PluginConfig = {
   channels: {
     system_message: { mode: "all" },
     screen_flash: { mode: "none" },
@@ -429,7 +429,7 @@ const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "acti
   ],
   dedupe_seconds: 60,
   suppress_when_active: true,
-  activity_timeout_ms: 15_000,
+  activity_timeout: 60,
   suppress_events_when_active: ["permission_required", "input_required"],
   session_stale_timeout_ms: 600_000,
   remote_delay_channels: [],
@@ -496,7 +496,7 @@ export function resolveConfig(options: PluginConfig): PluginConfig {
     events: globalEvents,
     dedupe_seconds: options.dedupe_seconds ?? DEFAULT_CONFIG.dedupe_seconds,
     suppress_when_active: options.suppress_when_active ?? DEFAULT_CONFIG.suppress_when_active,
-    activity_timeout_ms: options.activity_timeout_ms ?? DEFAULT_CONFIG.activity_timeout_ms,
+    activity_timeout: options.activity_timeout ?? DEFAULT_CONFIG.activity_timeout,
     suppress_events_when_active: options.suppress_events_when_active ?? DEFAULT_CONFIG.suppress_events_when_active,
     session_stale_timeout_ms: options.session_stale_timeout_ms ?? DEFAULT_CONFIG.session_stale_timeout_ms,
     remote_delay_channels: options.remote_delay_channels ?? DEFAULT_CONFIG.remote_delay_channels,

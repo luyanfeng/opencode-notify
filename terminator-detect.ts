@@ -75,8 +75,9 @@ export function isTerminalOccluded(): boolean | null {
     return false
   }
 
-  // 无法确定 X 窗口状态
-  return null
+  // 无法确定 X 窗口状态（xdotool/xprop 失败），保守假设可见
+  debug(`无法检测窗口状态（xdotool/xprop 失败），保守假设不遮挡`)
+  return false
 }
 
 /**

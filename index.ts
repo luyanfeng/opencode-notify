@@ -59,7 +59,7 @@ const plugin: Plugin = async (_input, options) => {
   const tracker = new SessionTracker(cfg.session_stale_timeout_ms)
 
   info(`插件已加载, log_level=${cfg.log?.level}, events=${JSON.stringify(cfg.events)}, `
-    + `suppressActive=${cfg.suppress_when_active}, timeout=${cfg.activity_timeout_ms}ms, `
+    + `suppressActive=${cfg.suppress_when_active}, timeout=${cfg.activity_timeout ?? 60}s, `
     + `suppressEvents=${JSON.stringify(cfg.suppress_events_when_active)}, `
     + `remote_channels=${JSON.stringify(delayedChannels)}, `
     + `terminator_detect=${!!process.env.TERMINATOR_UUID}`)
@@ -118,7 +118,7 @@ const plugin: Plugin = async (_input, options) => {
 
       // 会话感知抑制判定
       let shouldSuppress = cfg.suppress_when_active && suppressEvents.includes(msg.event)
-        && tracker.isSessionActive(sessionID, cfg.activity_timeout_ms ?? 15000)
+        && tracker.isSessionActive(sessionID, (cfg.activity_timeout ?? 60) * 1000)
 
       // Terminator 子屏遮挡覆盖：会话活跃但如果本屏被遮挡 → 强制通知
       if (shouldSuppress) {

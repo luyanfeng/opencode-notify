@@ -149,7 +149,7 @@ function cmdCheck() {
   console.log(`\n📋 订阅事件: ${events.length > 0 ? events.join(", ") : "(无)"}`)
 
   // 6. 检查活跃抑制
-  console.log(`\n🔇 活跃抑制: ${cfg.suppress_when_active ? "开启" : "关闭"} (超时 ${cfg.activity_timeout_ms}ms)`)
+  console.log(`\n🔇 活跃抑制: ${cfg.suppress_when_active ? "开启" : "关闭"} (超时 ${cfg.activity_timeout ?? 60}秒)`)
 
   // 6.5 日志配置
   console.log(`\n📝 日志: 等级=${cfg.log?.level ?? "info"} 文件=${getLogFile()}`)
