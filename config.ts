@@ -260,7 +260,12 @@ channels:
 # =============================================================================
 # 只订阅你关心的事件类型，减少不必要通知。
 #
-# 可选事件（各渠道也可单独配置 events 覆盖此全局列表）:
+# ⚠️ 全局 events 是主闸门：只有在此列表中的事件才会生成通知消息。
+#    渠道级 events（channels.xxx.events）只能从全局列表中进一步收窄，
+#    无法新增全局列表之外的事件。例如全局无 run_cancelled 时，
+#    即使渠道配了 run_cancelled 也不会收到。
+#
+# 可选事件（各渠道也可单独配置 events，从全局列表中进一步筛选）:
 #   permission_required  - Agent 需要用户授权（如执行命令、读写文件）
 #                          触发: permission.asked / question.asked
 #   input_required       - Agent 等待用户输入

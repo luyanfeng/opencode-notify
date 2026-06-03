@@ -76,14 +76,20 @@ export function route(
   // 其他错误类型 = 真实失败
   if (type === "session.error") {
     const err = properties.error
-    // 检查是否是用户取消
-    if (err?.name === "MessageAbortedError" && enabled.has("run_cancelled")) {
-      const msg = err?.data?.message ?? ""
-      return makeMsg(
-        "run_cancelled",
-        msg ? `用户中断: ${truncate(msg, 200)}` : defaultBody("run_cancelled"),
-      )
+
+    // 用户主动中断
+    if (err?.name === "MessageAbortedError") {
+      if (enabled.has("run_cancelled")) {
+        const msg = err?.data?.message ?? ""
+        return makeMsg(
+          "run_cancelled",
+          msg ? `用户中断: ${truncate(msg, 200)}` : defaultBody("run_cancelled"),
+        )
+      }
+      // run_cancelled 未启用 → 跳过，不降级为 run_failed
+      return null
     }
+
     // 真实失败
     if (enabled.has("run_failed")) {
       const errMsg = err?.data?.message ?? err?.name ?? defaultBody("run_failed")
