@@ -6,10 +6,11 @@
  *   apt install libnotify-bin / yum install libnotify
  */
 
-import { execSync } from "node:child_process"
+import { spawnSync } from "node:child_process"
 
 export async function notify(title: string, body: string): Promise<void> {
-  execSync(`notify-send "${title}" "${body}"`, {
+  // 使用 spawnSync 避免 shell 转义问题，body 中的换行符自然传递给 notify-send
+  spawnSync("notify-send", [title, body], {
     timeout: 5000,
     stdio: "ignore",
   })

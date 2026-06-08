@@ -86,9 +86,8 @@ const plugin: Plugin = async (_input, options) => {
 
       // 会话生命周期事件
       if (type === "session.created") {
-        const userPrompt = properties.info?.title
-        tracker.register(sessionID, userPrompt)
-        debug(`→ 会话已创建, 会话=${sessionID}${userPrompt ? ` userPrompt="${userPrompt}"` : ""}`)
+        tracker.register(sessionID)
+        debug(`→ 会话已创建, 会话=${sessionID}`)
       }
       if (type === "session.updated") {
         const topic = properties.info?.title
@@ -109,12 +108,11 @@ const plugin: Plugin = async (_input, options) => {
       const msg = route(event, cfg.events)
       if (!msg) return  // 不关心的事件
 
-      // 注入会话主题和任务描述，增强通知内容
-      const userPrompt = tracker.getUserPrompt(sessionID)
+      // 注入会话主题，增强通知内容
       const sessionTopic = tracker.getSessionTopic(sessionID)
-      enrich(msg, userPrompt, sessionTopic)
+      if (sessionTopic) enrich(msg, sessionTopic)
 
-      debug(`→ 匹配通知: ${msg.event} sessionTopic="${sessionTopic ?? ""}" userPrompt="${userPrompt ?? ""}"`)
+      debug(`→ 匹配通知: ${msg.event} sessionTopic="${sessionTopic ?? ""}"`)
 
       // 会话感知抑制判定
       let shouldSuppress = cfg.suppress_when_active && suppressEvents.includes(msg.event)
