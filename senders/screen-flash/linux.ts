@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url"
 import type { ScreenFlashChannelConfig } from "../../config.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const MARQUEE_SCRIPT = join(__dirname, "..", "..", "scripts", "marquee.py")
+const MARQUEE_SCRIPT = join(__dirname, "linux-marquee.py")
 
 export async function flash(config: ScreenFlashChannelConfig): Promise<void> {
   const args = [

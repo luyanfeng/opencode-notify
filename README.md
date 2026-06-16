@@ -353,12 +353,11 @@ opencode-notify/
 │   ├── install.md             # 安装指南
 │   ├── features.md            # 功能详解
 │   └── de.png                 # 跑马灯效果截图
-├── scripts/
-│   └── marquee.py             # 屏幕跑马灯脚本
 ├── senders/
 │   ├── types.ts               # Sender 接口
 │   ├── system/                # 系统通知
 │   ├── screen-flash/          # 屏幕跑马灯
+│   │   └── linux-marquee.py   #     (Linux) GTK3 跑马灯脚本
 │   ├── custom-webhook.ts
 │   ├── wechat-work.ts
 │   └── feishu.ts

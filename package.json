@@ -14,7 +14,7 @@
   "files": [
     "*.ts",
     "senders/",
-    "scripts/marquee.py",
+    "senders/screen-flash/linux-marquee.py",
     "README.md",
     "LICENSE"
   ],
