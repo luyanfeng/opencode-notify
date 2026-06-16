@@ -69,17 +69,29 @@ class MarqueeWindow(Gtk.Window):
         self.connect("realize", self._on_realize)
         self.connect("draw", self.on_draw)
         self.connect("screen-changed", self.on_screen_changed)
+        self.connect("window-state-event", self.on_window_state_event)
 
         # 60fps 动画循环
         GLib.timeout_add(16, self.on_tick)
 
+    def _rgba_available(self):
+        """检查 RGBA 视觉和合成管理器是否可用"""
+        screen = self.get_screen()
+        visual = screen.get_rgba_visual()
+        if visual and screen.is_composited():
+            return True
+        # 无 RGBA 或无合成管理器 → 使用窗口透明度
+        self.set_opacity(self.intensity)
+        return False
+
     def _setup_transparency(self):
-        """配置 RGBA 透明支持"""
+        """配置透明支持"""
         visual = self.get_screen().get_rgba_visual()
         if visual:
             self.set_visual(visual)
+            if not self.get_screen().is_composited():
+                self.set_opacity(self.intensity)
         else:
-            # 没有 RGBA 支持时回退为整体窗口透明度
             self.set_opacity(self.intensity)
 
     def _on_realize(self, widget):
@@ -91,6 +103,11 @@ class MarqueeWindow(Gtk.Window):
 
     def on_screen_changed(self, widget, old_screen):
         self._setup_transparency()
+        self.queue_draw()
+
+    def on_window_state_event(self, widget, event):
+        self._setup_transparency()
+        self.queue_draw()
 
     def on_draw(self, widget, cr):
         w = self.screen_w
@@ -99,9 +116,12 @@ class MarqueeWindow(Gtk.Window):
         t = self.t
         step = self.light_w + self.light_gap
 
-        # 清空为全透明
-        cr.set_source_rgba(0, 0, 0, 0)
-        cr.set_operator(_cairo.Operator.SOURCE)
+        # 无 RGBA/合成时跳过绘制（窗口透明度已由 _setup_transparency 处理）
+        if not self._rgba_available():
+            return True
+
+        # 清空为全透明 — 使用 CLEAR 操作符比 SOURCE 更可靠
+        cr.set_operator(_cairo.Operator.CLEAR)
         cr.paint()
         cr.set_operator(_cairo.Operator.OVER)
 
