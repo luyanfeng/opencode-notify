@@ -5,7 +5,7 @@
  * 强制通知（即使用户在该会话中活跃）。
  *
  * 检测策略（两级）：
- *   1. X 窗口级别：Terminator 是否是当前活跃窗口（xdotool + xprop）
+ *   1. X 窗口级别：Terminator 是否是当前活跃窗口（xprop -root _NET_ACTIVE_WINDOW）
  *      否 → 用户在别的应用中 → 遮挡
  *   2. 子屏级别：用户当前聚焦的是哪个子屏（DBus get_focused_terminal）
  *     聚焦 != 本屏 → 用户在另一个子屏上 → 遮挡
@@ -75,8 +75,8 @@ export function isTerminalOccluded(): boolean | null {
     return false
   }
 
-  // 无法确定 X 窗口状态（xdotool/xprop 失败），保守假设可见
-  debug(`无法检测窗口状态（xdotool/xprop 失败），保守假设不遮挡`)
+  // 无法确定 X 窗口状态（xprop 失败），保守假设可见
+  debug(`无法检测窗口状态（xprop 失败），保守假设不遮挡`)
   return false
 }
 
@@ -105,12 +105,12 @@ function shortId(uuid: string): string {
 function isTerminatorWindowActive(): boolean | null {
   try {
     const out = execSync(
-      `xprop -id $(xdotool getactivewindow) WM_CLASS 2>/dev/null`,
+      `xprop -root _NET_ACTIVE_WINDOW 2>/dev/null | awk '{print $NF}' | xargs -I{} xprop -id {} WM_CLASS 2>/dev/null`,
       { encoding: "utf-8", timeout: 5000 },
     ).trim()
     return out.includes('"Terminator"')
   } catch (e) {
-    debug(`xprop/xdotool 检测 Terminator 窗口失败: ${e instanceof Error ? e.message : String(e)}`)
+    debug(`xprop 检测 Terminator 窗口失败: ${e instanceof Error ? e.message : String(e)}`)
     return null
   }
 }

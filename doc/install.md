@@ -95,7 +95,7 @@ bun add @freely01/opencode-notify
 
 自动检测，无需额外配置。检测依赖以下工具：
 
-- `xdotool` — `apt install xdotool`
+- `xdotool` — `apt install xdotool`（仅 Terminator 通知弹起场景需要）
 - `xprop` — X11 系统自带
 
 > **注意：** X11 工具在 Wayland 下不可用，检测失败时静默降级，不影响正常通知抑制。

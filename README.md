@@ -206,7 +206,7 @@ remote_delay_max_count: 3
 ```
 事件被活跃抑制
   ↓
-Terminator 窗口是当前 X 活跃窗口？     ← xdotool + xprop
+Terminator 窗口是当前 X 活跃窗口？     ← xprop -root _NET_ACTIVE_WINDOW + WM_CLASS
   否 → 用户在别的应用中（浏览器/IDE）→ 强制通知
   是 → 本屏可见 → 正常抑制
 ```
@@ -215,7 +215,7 @@ Terminator 窗口是当前 X 活跃窗口？     ← xdotool + xprop
 
 | 工具 | 用途 | 安装 |
 |------|------|------|
-| `xdotool` | 获取活跃窗口 ID | `apt install xdotool` |
+| `xdotool` | 窗口激活（仅 Terminator 通知弹起场景） | `apt install xdotool` |
 | `xprop` | 查询窗口 WM_CLASS | 系统自带 |
 
 ---

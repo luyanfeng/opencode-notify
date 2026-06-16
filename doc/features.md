@@ -113,7 +113,7 @@ Terminator 是一款支持在同一窗口中分多个子屏幕的终端模拟器
 ```
 事件被活跃抑制
   ↓
-① Terminator 窗口是当前 X 活跃窗口？     ← xdotool + xprop (WM_CLASS)
+① Terminator 窗口是当前 X 活跃窗口？     ← xprop -root _NET_ACTIVE_WINDOW + WM_CLASS
   否 → 用户在别的应用中（浏览器/IDE）→ 强制通知
   ↓ 是
 ② 用户聚焦的是哪个子屏？               ← DBus get_focused_terminal
@@ -136,7 +136,7 @@ Terminator 是一款支持在同一窗口中分多个子屏幕的终端模拟器
 ### 技术原理
 
 - 利用 Terminator 在每个子终端中设置的 `$TERMINATOR_UUID` 环境变量确定身份
-- **第一级**: 通过 `xprop -id $(xdotool getactivewindow) WM_CLASS` 检测 Terminator 窗口是否是当前 X 活跃窗口
+- **第一级**: 通过 `xprop -root _NET_ACTIVE_WINDOW` 获取当前活跃窗口 ID，再查询其 `WM_CLASS` 检测 Terminator 窗口是否是当前 X 活跃窗口（替代不稳定的 `xdotool getactivewindow`）
 - **第二级**: 通过 DBus 的 `get_focused_terminal` 获取当前聚焦子屏的 UUID，与本屏对比
 - **判断**: 只要用户不在本屏上操作，就视为遮挡并强制通知
 
