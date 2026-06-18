@@ -20,10 +20,16 @@ export interface SessionInfo {
   lastActivity: number
   /** 会话创建时间 */
   createdAt: number
+  /** 父会话 ID，存在则表示是子会话（background task） */
+  parentID?: string
   /** 用户输入的问题/任务描述（创建时捕获） */
   userPrompt?: string
   /** opencode 自动生成的会话主题（session.updated 时更新） */
   sessionTopic?: string
+}
+
+export function isBackgroundSession(info: SessionInfo): boolean {
+  return !!info.parentID
 }
 
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000  // 5 分钟
@@ -73,19 +79,28 @@ export class SessionTracker {
   }
 
   /** 注册新会话 */
-  register(sessionID: string, userPrompt?: string): void {
+  register(sessionID: string, parentID?: string, userPrompt?: string): void {
     if (sessionID === "unknown") return
     const existing = this.sessions.get(sessionID)
     if (existing) {
+      if (parentID) existing.parentID = parentID
       if (userPrompt) existing.userPrompt = userPrompt
     } else {
       this.sessions.set(sessionID, {
         sessionID,
         lastActivity: Date.now(),
         createdAt: Date.now(),
+        parentID,
         userPrompt,
       })
     }
+  }
+
+  /** 判断会话是否为子会话（background task） */
+  isBackground(sessionID: string): boolean {
+    if (sessionID === "unknown") return false
+    const info = this.sessions.get(sessionID)
+    return info ? isBackgroundSession(info) : false
   }
 
   /** 更新会话主题（opencode 自动生成，来自 session.updated） */

@@ -5,9 +5,10 @@ import { join, dirname } from "node:path"
 /**
  * 日志等级（按优先级从高到低）
  */
-export type LogLevel = "error" | "warn" | "info" | "debug"
+export type LogLevel = "off" | "error" | "warn" | "info" | "debug"
 
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
+  off: -1,
   error: 0,
   warn: 1,
   info: 2,

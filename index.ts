@@ -86,8 +86,9 @@ const plugin: Plugin = async (_input, options) => {
 
       // 会话生命周期事件
       if (type === "session.created") {
-        tracker.register(sessionID)
-        debug(`→ 会话已创建, 会话=${sessionID}`)
+        const parentID = properties.info?.parentID
+        tracker.register(sessionID, parentID)
+        debug(`→ 会话已创建, 会话=${sessionID}${parentID ? ` parent=${parentID}` : ""}`)
       }
       if (type === "session.updated") {
         const topic = properties.info?.title
@@ -113,6 +114,12 @@ const plugin: Plugin = async (_input, options) => {
       if (sessionTopic) enrich(msg, sessionTopic)
 
       debug(`→ 匹配通知: ${msg.event} sessionTopic="${sessionTopic ?? ""}"`)
+
+      // 子会话（background task）：非失败事件跳过，失败仍通知
+      if (tracker.isBackground(sessionID) && msg.event !== "run_failed") {
+        debug(`→ 子会话(background task) ${sessionID} 跳过通知 (${msg.event})`)
+        return
+      }
 
       // 会话感知抑制判定
       let shouldSuppress = cfg.suppress_when_active && suppressEvents.includes(msg.event)

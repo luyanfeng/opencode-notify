@@ -59,7 +59,7 @@ export interface ChannelsConfig {
 
 /** 日志配置 */
 export interface LogConfig {
-  /** 日志等级：error | warn | info | debug，默认 info */
+  /** 日志等级：off | error | warn | info | debug，默认 info */
   level?: string
   /** 日志文件路径，默认 ~/.opencode-notify/plugin.log */
   file?: string
@@ -357,7 +357,8 @@ remote_delay_channels: []            # 启用的延迟推送渠道列表
 # 日志等级控制输出详细程度，日常使用 info 即可。
 # ---------------------------------------------------------------------------
 log:
-  level: info                        # 日志等级: error | warn | info | debug
+  level: info                        # 日志等级: off | error | warn | info | debug
+                                     #   off   - 完全禁用日志输出
                                      #   error - 仅记录错误
                                      #   warn  - 错误 + 警告
                                      #   info  - 错误 + 警告 + 常规信息（推荐）
