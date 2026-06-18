@@ -30,127 +30,140 @@ const USER_ACTIVITY_EVENTS = new Set([
 
 
 const plugin: Plugin = async (_input, options) => {
-  // 确保配置文件存在（不存在则生成默认模板）
-  ensureConfigFile()
+  try {
+    // 确保配置文件存在（不存在则生成默认模板）
+    ensureConfigFile()
 
-  // 加载 YAML 配置 + 合并 plugin options
-  const yamlCfg = loadYamlConfig() ?? {}
-  const merged = mergeConfig(yamlCfg, options as PluginConfig ?? {})
-  const cfg = resolveConfig(merged)
-  configureLog(cfg.log?.level as any ?? "info", cfg.log?.file)
-  const store = new FileStore()
+    // 加载 YAML 配置 + 合并 plugin options
+    const yamlCfg = loadYamlConfig() ?? {}
+    const merged = mergeConfig(yamlCfg, options as PluginConfig ?? {})
+    const cfg = resolveConfig(merged)
+    configureLog(cfg.log?.level as any ?? "info", cfg.log?.file)
+    const store = new FileStore()
 
-  // 构建发送器
-  const { senders, senderMap } = buildSenders(cfg)
-  const dispatcher = new Dispatcher(store, cfg.dedupe_seconds ?? 60, senders)
+    // 构建发送器
+    const { senders, senderMap } = buildSenders(cfg)
+    const dispatcher = new Dispatcher(store, cfg.dedupe_seconds ?? 60, senders)
 
-  // 远程延迟推送
-  const delayedChannels = cfg.remote_delay_channels ?? []
-  const delayedDispatcher = delayedChannels.length > 0
-    ? new DelayedDispatcher(
-        (cfg.remote_delay_seconds ?? 60) * 1000,
-        cfg.remote_delay_max_count ?? 3,
-        delayedChannels,
-        senderMap,
-      )
-    : undefined
+    // 远程延迟推送
+    const delayedChannels = cfg.remote_delay_channels ?? []
+    const delayedDispatcher = delayedChannels.length > 0
+      ? new DelayedDispatcher(
+          (cfg.remote_delay_seconds ?? 60) * 1000,
+          cfg.remote_delay_max_count ?? 3,
+          delayedChannels,
+          senderMap,
+        )
+      : undefined
 
-  // 会话感知抑制
-  const tracker = new SessionTracker(cfg.session_stale_timeout_ms)
+    // 会话感知抑制
+    const tracker = new SessionTracker(cfg.session_stale_timeout_ms)
 
-  info(`插件已加载, log_level=${cfg.log?.level}, events=${JSON.stringify(cfg.events)}, `
-    + `suppressActive=${cfg.suppress_when_active}, timeout=${cfg.activity_timeout ?? 60}s, `
-    + `suppressEvents=${JSON.stringify(cfg.suppress_events_when_active)}, `
-    + `remote_channels=${JSON.stringify(delayedChannels)}, `
-    + `terminator_detect=${!!process.env.TERMINATOR_UUID}`)
+    info(`插件已加载, log_level=${cfg.log?.level}, events=${JSON.stringify(cfg.events)}, `
+      + `suppressActive=${cfg.suppress_when_active}, timeout=${cfg.activity_timeout ?? 60}s, `
+      + `suppressEvents=${JSON.stringify(cfg.suppress_events_when_active)}, `
+      + `remote_channels=${JSON.stringify(delayedChannels)}, `
+      + `terminator_detect=${!!process.env.TERMINATOR_UUID}`)
 
-  return {
-    // event 总线 — 所有事件通过此钩子
-    event: async ({ event }) => {
-      const { type, properties } = event as any
-      const propKeys = properties ? Object.keys(properties).join(",") : ""
+    return {
+      // event 总线 — 所有事件通过此钩子
+      event: async ({ event }) => {
+        let type = ""
+        try {
+          const parsed = event as any
+          type = parsed.type ?? ""
+          const properties = parsed.properties
+          const propKeys = properties ? Object.keys(properties).join(",") : ""
 
-      // 调试日志：记录所有事件
-      debug(`[event] type=${type} keys=${propKeys}`)
+          // 调试日志：记录所有事件
+          debug(`[event] type=${type} keys=${propKeys}`)
 
-      const sessionID = properties?.sessionID ?? "unknown"
+          const sessionID = properties?.sessionID ?? "unknown"
 
-      // === 更新会话追踪状态 ===
+          // === 更新会话追踪状态 ===
 
-      // 用户操作事件 → 标记该会话活跃 + 取消延迟通知
-      if (USER_ACTIVITY_EVENTS.has(type)) {
-        tracker.markActivity(sessionID)
-        delayedDispatcher?.cancelForSession(sessionID)
-        debug(`→ 用户活跃事件, 会话=${sessionID}`)
-      }
+          // 用户操作事件 → 标记该会话活跃 + 取消延迟通知
+          if (USER_ACTIVITY_EVENTS.has(type)) {
+            tracker.markActivity(sessionID)
+            delayedDispatcher?.cancelForSession(sessionID)
+            debug(`→ 用户活跃事件, 会话=${sessionID}`)
+          }
 
-      // 会话生命周期事件
-      if (type === "session.created") {
-        const parentID = properties.info?.parentID
-        tracker.register(sessionID, parentID)
-        debug(`→ 会话已创建, 会话=${sessionID}${parentID ? ` parent=${parentID}` : ""}`)
-      }
-      if (type === "session.updated") {
-        const topic = properties.info?.title
-        tracker.updateTopic(sessionID, topic)
-        debug(`→ 会话已更新, 会话=${sessionID}${topic ? ` topic="${topic}"` : ""}`)
-      }
-      if (type === "session.deleted") {
-        tracker.remove(sessionID)
-        delayedDispatcher?.cancelForSession(sessionID)
-        debug(`→ 会话已删除, 会话=${sessionID}`)
-      }
+          // 会话生命周期事件
+          if (type === "session.created") {
+            const parentID = properties.info?.parentID
+            tracker.register(sessionID, parentID)
+            debug(`→ 会话已创建, 会话=${sessionID}${parentID ? ` parent=${parentID}` : ""}`)
+          }
+          if (type === "session.updated") {
+            const topic = properties.info?.title
+            tracker.updateTopic(sessionID, topic)
+            debug(`→ 会话已更新, 会话=${sessionID}${topic ? ` topic="${topic}"` : ""}`)
+          }
+          if (type === "session.deleted") {
+            tracker.remove(sessionID)
+            delayedDispatcher?.cancelForSession(sessionID)
+            debug(`→ 会话已删除, 会话=${sessionID}`)
+          }
 
-      // === 通知判定 ===
+          // === 通知判定 ===
 
-      const suppressEvents = cfg.suppress_events_when_active ?? []
+          const suppressEvents = cfg.suppress_events_when_active ?? []
 
-      // 先路由事件，看是否匹配通知
-      const msg = route(event, cfg.events)
-      if (!msg) return  // 不关心的事件
+          // 先路由事件，看是否匹配通知
+          const msg = route(event, cfg.events)
+          if (!msg) return  // 不关心的事件
 
-      // 注入会话主题，增强通知内容
-      const sessionTopic = tracker.getSessionTopic(sessionID)
-      if (sessionTopic) enrich(msg, sessionTopic)
+          // 注入会话主题，增强通知内容
+          const sessionTopic = tracker.getSessionTopic(sessionID)
+          if (sessionTopic) enrich(msg, sessionTopic)
 
-      debug(`→ 匹配通知: ${msg.event} sessionTopic="${sessionTopic ?? ""}"`)
+          debug(`→ 匹配通知: ${msg.event} sessionTopic="${sessionTopic ?? ""}"`)
 
-      // 子会话（background task）：非失败事件跳过，失败仍通知
-      if (tracker.isBackground(sessionID) && msg.event !== "run_failed") {
-        debug(`→ 子会话(background task) ${sessionID} 跳过通知 (${msg.event})`)
-        return
-      }
+          // 子会话（background task）：非失败事件跳过，失败仍通知
+          if (tracker.isBackground(sessionID) && msg.event !== "run_failed") {
+            debug(`→ 子会话(background task) ${sessionID} 跳过通知 (${msg.event})`)
+            return
+          }
 
-      // 会话感知抑制判定
-      let shouldSuppress = cfg.suppress_when_active && suppressEvents.includes(msg.event)
-        && tracker.isSessionActive(sessionID, (cfg.activity_timeout ?? 60) * 1000)
+          // 会话感知抑制判定
+          let shouldSuppress = cfg.suppress_when_active && suppressEvents.includes(msg.event)
+            && tracker.isSessionActive(sessionID, (cfg.activity_timeout ?? 60) * 1000)
 
-      // Terminator 子屏遮挡覆盖：会话活跃但如果本屏被遮挡 → 强制通知
-      if (shouldSuppress) {
-        const occluded = isTerminalOccluded()
-        if (occluded === true) {
-          info(`→ 会话 ${sessionID} 活跃但 Terminator 子屏被遮挡，强制通知 (${msg.event})`)
-          shouldSuppress = false
-        } else if (occluded === false) {
-          debug(`→ Terminator 子屏未遮挡，正常抑制`)
+          // Terminator 子屏遮挡覆盖：会话活跃但如果本屏被遮挡 → 强制通知
+          if (shouldSuppress) {
+            const occluded = isTerminalOccluded()
+            if (occluded === true) {
+              info(`→ 会话 ${sessionID} 活跃但 Terminator 子屏被遮挡，强制通知 (${msg.event})`)
+              shouldSuppress = false
+            } else if (occluded === false) {
+              debug(`→ Terminator 子屏未遮挡，正常抑制`)
+            }
+            // null = 不在 Terminator 或检测失败，不处理
+          }
+
+          if (shouldSuppress) {
+            info(`→ 会话 ${sessionID} 活跃中，跳过即时通知 (${msg.event})`)
+            // 仍调度延迟推送：用户可能在电脑前屏上可见所以抑制，
+            // 但万一用户已离开电脑，延迟推送能在用户未回来时再次提醒
+            delayedDispatcher?.schedule(msg)
+            return
+          }
+
+          // 调度发送（正常立即通知）
+          await dispatcher.dispatch(msg)
+
+          // 正常通知已发出 → 调度远程延迟推送（如果启用）
+          delayedDispatcher?.schedule(msg)
+        } catch (e) {
+          error(`事件处理异常 type=${type}: ${e instanceof Error ? e.message : String(e)}`)
         }
-        // null = 不在 Terminator 或检测失败，不处理
-      }
-
-      if (shouldSuppress) {
-        info(`→ 会话 ${sessionID} 活跃中，跳过即时通知 (${msg.event})`)
-        // 仍调度延迟推送：用户可能在电脑前屏上可见所以抑制，
-        // 但万一用户已离开电脑，延迟推送能在用户未回来时再次提醒
-        delayedDispatcher?.schedule(msg)
-        return
-      }
-
-      // 调度发送（正常立即通知）
-      await dispatcher.dispatch(msg)
-
-      // 正常通知已发出 → 调度远程延迟推送（如果启用）
-      delayedDispatcher?.schedule(msg)
-    },
+      },
+    }
+  } catch (e) {
+    error(`插件初始化失败: ${e instanceof Error ? e.message : String(e)}`)
+    // 初始化失败仍返回空 hook，避免 opencode 加载插件时崩溃
+    return { event: async () => {} }
   }
 }
 

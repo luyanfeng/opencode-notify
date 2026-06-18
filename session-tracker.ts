@@ -119,11 +119,6 @@ export class SessionTracker {
     }
   }
 
-  /** 获取用户提示词 */
-  getUserPrompt(sessionID: string): string | undefined {
-    return this.sessions.get(sessionID)?.userPrompt
-  }
-
   /** 获取会话主题 */
   getSessionTopic(sessionID: string): string | undefined {
     return this.sessions.get(sessionID)?.sessionTopic
@@ -175,8 +170,5 @@ export class SessionTracker {
     }
   }
 
-  /** 当前追踪的会话数（用于调试） */
-  get size(): number {
-    return this.sessions.size
-  }
+
 }

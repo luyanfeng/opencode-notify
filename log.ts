@@ -42,11 +42,6 @@ export function getLogFile(): string {
   return state.file
 }
 
-/** 获取当前日志等级 */
-export function getLogLevel(): LogLevel {
-  return state.level
-}
-
 function ensureDir(): void {
   try {
     const dir = dirname(state.file)

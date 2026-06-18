@@ -15,15 +15,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const MARQUEE_SCRIPT = join(__dirname, "..", "..", "scripts", "linux-marquee.py")
 
 export async function flash(config: ScreenFlashChannelConfig): Promise<void> {
-  const args = [
-    MARQUEE_SCRIPT,
-    String(config.duration ?? 3.0),
-    String(config.speed ?? 4.0),
-    String(config.intensity ?? 0.9),
-  ]
-  const child = spawn("python3", args, {
-    stdio: "ignore",
-    detached: true,
-  })
-  child.unref()
+  try {
+    const args = [
+      MARQUEE_SCRIPT,
+      String(config.duration ?? 3.0),
+      String(config.speed ?? 4.0),
+      String(config.intensity ?? 0.9),
+    ]
+    const child = spawn("python3", args, {
+      stdio: "ignore",
+      detached: true,
+    })
+    child.unref()
+  } catch {
+    // Linux 跑马灯失败不影响主流程
+  }
 }

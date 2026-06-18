@@ -16,9 +16,6 @@ export interface ChannelConfig {
   events?: string[]
 }
 
-/** 系统消息通知配置 */
-export interface SystemMessageChannelConfig extends ChannelConfig {}
-
 /** 屏幕跑马灯渠道配置 */
 export interface ScreenFlashChannelConfig extends ChannelConfig {
   /** 持续秒数，默认 3.0 */
@@ -50,7 +47,7 @@ export interface CustomWebhookChannelConfig extends ChannelConfig {
 
 /** 渠道配置集合 */
 export interface ChannelsConfig {
-  system_message?: SystemMessageChannelConfig
+  system_message?: ChannelConfig
   screen_flash?: ScreenFlashChannelConfig
   wechat_work?: WechatWorkChannelConfig
   feishu?: FeishuChannelConfig
@@ -148,11 +145,7 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, dirname } from "node:path"
 import yaml from "js-yaml"
-
-/** 默认配置文件路径 */
-export function defaultConfigPath(): string {
-  return join(homedir(), ".config", "opencode", "opencode-notify.yaml")
-}
+import { warn } from "./log.js"
 
 /** 默认配置模板内容（仅启用系统通知） */
 const DEFAULT_CONFIG_TEMPLATE = `# =============================================================================
@@ -388,8 +381,13 @@ export function loadYamlConfig(): PluginConfig | null {
 
   if (!existsSync(configPath)) return null
 
-  const raw = readFileSync(configPath, "utf-8")
-  return yaml.load(raw) as PluginConfig
+  try {
+    const raw = readFileSync(configPath, "utf-8")
+    return yaml.load(raw) as PluginConfig
+  } catch (e) {
+    warn(`配置文件读取失败: ${e instanceof Error ? e.message : String(e)}`)
+    return null
+  }
 }
 
 /**

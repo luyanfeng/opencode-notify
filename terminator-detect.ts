@@ -80,15 +80,6 @@ export function isTerminalOccluded(): boolean | null {
   return false
 }
 
-/**
- * 检查是否在 Terminator 环境中（基于环境变量）
- */
-export function isInsideTerminator(): boolean {
-  if (insideTerminator !== null) return insideTerminator
-  insideTerminator = !!process.env.TERMINATOR_UUID
-  return insideTerminator
-}
-
 // ─── 工具函数 ───────────────────────────────────────────────────────────────
 
 /** 取 UUID 前 8 位用于日志 */

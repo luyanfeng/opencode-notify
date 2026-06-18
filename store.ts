@@ -8,7 +8,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
 import { warn, error } from "./log.js"
 
 interface StoreData {
@@ -24,24 +24,6 @@ export class FileStore {
     this.path =
       path ?? join(homedir(), ".opencode-notify", "state.json")
     this.load()
-  }
-
-  /**
-   * 检查是否可以发送（去重检查）
-   * 返回 true 表示允许发送
-   */
-  shouldSend(key: string, windowSec: number, now: number = Date.now()): boolean {
-    // 检查已发送记录
-    const last = this.lastSent[key]
-    if (last && now - last < windowSec * 1000) {
-      return false
-    }
-    // 检查是否已有预留
-    const reserved = this.reservations[key]
-    if (reserved && now - reserved < windowSec * 1000) {
-      return false
-    }
-    return true
   }
 
   /**
@@ -99,7 +81,7 @@ export class FileStore {
 
   private save(): void {
     try {
-      const dir = this.path.substring(0, this.path.lastIndexOf("/"))
+      const dir = dirname(this.path)
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true })
       }

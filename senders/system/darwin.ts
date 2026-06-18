@@ -12,20 +12,24 @@
 import { execSync } from "node:child_process"
 
 export async function notify(title: string, body: string): Promise<void> {
-  // sanitize() 将 " 转义为 \"，但 AppleScript 使用 "" 表示双引号。
-  // 此处先还原，再应用 AppleScript 转义。
-  const asTitle = aq(title)
-  const asBody = aq(body)
+  try {
+    // sanitize() 将 " 转义为 \"，但 AppleScript 使用 "" 表示双引号。
+    // 此处先还原，再应用 AppleScript 转义。
+    const asTitle = aq(title)
+    const asBody = aq(body)
 
-  // 提取 title 中的 [ses_xxx] 前缀作为副标题
-  const sessionMatch = title.match(/^(\[[^\]]+\])/)
-  const asSubtitle = aq(sessionMatch?.[1] ?? "")
+    // 提取 title 中的 [ses_xxx] 前缀作为副标题
+    const sessionMatch = title.match(/^(\[[^\]]+\])/)
+    const asSubtitle = aq(sessionMatch?.[1] ?? "")
 
-  const script = `display notification "${asBody}" with title "${asTitle}" subtitle "${asSubtitle}" sound name "default"`
-  execSync(`osascript -e ${JSON.stringify(script)}`, {
-    timeout: 5000,
-    stdio: "ignore",
-  })
+    const script = `display notification "${asBody}" with title "${asTitle}" subtitle "${asSubtitle}" sound name "default"`
+    execSync(`osascript -e ${JSON.stringify(script)}`, {
+      timeout: 5000,
+      stdio: "ignore",
+    })
+  } catch {
+    // macOS 通知失败不影响主流程
+  }
 }
 
 /**

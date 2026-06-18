@@ -36,7 +36,7 @@ export function route(
       agent: "opencode",
       event: evt,
       sessionID,
-      title: formatTitle(evt, sessionID),
+      title: formatTitle(evt),
       body: detail,
     }
     // 将 body 格式化为结构化通知正文

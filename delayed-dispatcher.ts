@@ -151,41 +151,45 @@ export class DelayedDispatcher {
     const currentDelay = this.getDelayMs(entry.count)
 
     entry.timeoutId = setTimeout(() => {
-      entry.timeoutId = null
+      try {
+        entry.timeoutId = null
 
-      // 发送前检查：如果终端子屏可见（用户已回到电脑前），取消本会话的所有待发延迟
-      if (isTerminalOccluded() === false) {
-        info(`远程延迟: 用户已回到终端，取消会话=${sid} 的延迟推送`)
-        this.cancelForSession(sid)
-        return
-      }
-
-      // 在正文追加延迟标记（第几次 / 共几次 / 下次时间）
-      const sendCount = entry.count + 1  // 1-based
-      const nextDelay = this.getDelayMs(entry.count + 1)
-      msg.body = this.markDelayBody(msg.body, sendCount, this.maxCount, nextDelay)
-
-      // 发送延迟通知
-      const sender = this.senders.get(ch)
-      if (sender) {
-        sender.send(msg).catch((err) => {
-          error(`远程延迟推送失败 会话=${sid} 渠道=${ch}: ${err}`)
-        })
-        info(`远程延迟: 已推送 会话=${sid} 渠道=${ch}`)
-      }
-
-      // 检查是否需要继续重试
-      entry.count++
-      if (entry.count < this.maxCount) {
-        this.scheduleOne(sid, ch, msg)
-        debug(`远程延迟: 重试 ${entry.count}/${this.maxCount} 会话=${sid} 渠道=${ch} 下次延迟=${this.getDelayMs(entry.count)}ms`)
-      } else {
-        // 达到最大次数，清理
-        chMap.delete(ch)
-        if (chMap.size === 0) {
-          this.pending.delete(sid)
+        // 发送前检查：如果终端子屏可见（用户已回到电脑前），取消本会话的所有待发延迟
+        if (isTerminalOccluded() === false) {
+          info(`远程延迟: 用户已回到终端，取消会话=${sid} 的延迟推送`)
+          this.cancelForSession(sid)
+          return
         }
-        info(`远程延迟: 已完成 会话=${sid} 渠道=${ch} (推送${entry.count}次)`)
+
+        // 在正文追加延迟标记（第几次 / 共几次 / 下次时间）
+        const sendCount = entry.count + 1  // 1-based
+        const nextDelay = this.getDelayMs(entry.count + 1)
+        msg.body = this.markDelayBody(msg.body, sendCount, this.maxCount, nextDelay)
+
+        // 发送延迟通知
+        const sender = this.senders.get(ch)
+        if (sender) {
+          sender.send(msg).catch((err) => {
+            error(`远程延迟推送失败 会话=${sid} 渠道=${ch}: ${err}`)
+          })
+          info(`远程延迟: 已推送 会话=${sid} 渠道=${ch}`)
+        }
+
+        // 检查是否需要继续重试
+        entry.count++
+        if (entry.count < this.maxCount) {
+          this.scheduleOne(sid, ch, msg)
+          debug(`远程延迟: 重试 ${entry.count}/${this.maxCount} 会话=${sid} 渠道=${ch} 下次延迟=${this.getDelayMs(entry.count)}ms`)
+        } else {
+          // 达到最大次数，清理
+          chMap.delete(ch)
+          if (chMap.size === 0) {
+            this.pending.delete(sid)
+          }
+          info(`远程延迟: 已完成 会话=${sid} 渠道=${ch} (推送${entry.count}次)`)
+        }
+      } catch (e) {
+        error(`远程延迟回调异常 会话=${sid} 渠道=${ch}: ${e instanceof Error ? e.message : String(e)}`)
       }
     }, currentDelay)
   }

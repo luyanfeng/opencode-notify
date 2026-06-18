@@ -11,6 +11,7 @@ import { execSync } from "node:child_process"
 import type { ScreenFlashChannelConfig } from "../../config.js"
 
 export async function flash(config: ScreenFlashChannelConfig): Promise<void> {
+  try {
   const duration = config.duration ?? 3.0
   const speed = config.speed ?? 4.0
   const borderWidth = 8
@@ -126,4 +127,7 @@ $form.Close()
     timeout: Math.max(5000, totalMs + 5000),
     stdio: "ignore",
   })
+  } catch {
+    // Windows 跑马灯失败不影响主流程
+  }
 }

@@ -35,9 +35,8 @@ function shortSession(sessionID: string): string {
 /**
  * 格式化通知标题
  * @param event 事件类型
- * @param sessionID 会话 ID（可选，传入后在标题前加会话标签）
  */
-export function formatTitle(event: string, _sessionID?: string): string {
+export function formatTitle(event: string): string {
   const label = EVENT_LABELS[event] ?? event
   return `opencode - ${label}`
 }

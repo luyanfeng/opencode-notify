@@ -13,10 +13,11 @@
 import { execSync } from "node:child_process"
 
 export async function notify(title: string, body: string): Promise<void> {
-  const t = title.replace(/'/g, "''")
-  const b = body.replace(/'/g, "''")
+  try {
+    const t = title.replace(/'/g, "''")
+    const b = body.replace(/'/g, "''")
 
-  const ps = `
+    const ps = `
 # 注册 opencode-notify 到操作中心
 New-Item -Path 'HKCU:\\SOFTWARE\\Classes\\AppUserModelId\\opencode-notify' -Force -ErrorAction Stop | Out-Null
 New-ItemProperty -Path 'HKCU:\\SOFTWARE\\Classes\\AppUserModelId\\opencode-notify' -Name 'DisplayName' -Value 'opencode-notify' -PropertyType String -Force -ErrorAction Stop | Out-Null
@@ -44,8 +45,11 @@ try {
 }
 `.trim()
 
-  execSync(`powershell -NoProfile -Command ${JSON.stringify(ps)}`, {
-    timeout: 15000,
-    stdio: "ignore",
-  })
+    execSync(`powershell -NoProfile -Command ${JSON.stringify(ps)}`, {
+      timeout: 15000,
+      stdio: "ignore",
+    })
+  } catch {
+    // Windows 系统通知失败不影响主流程
+  }
 }
