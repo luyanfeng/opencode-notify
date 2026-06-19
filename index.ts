@@ -103,7 +103,7 @@ const plugin: Plugin = async (_input, options) => {
           }
           if (type === "session.deleted") {
             tracker.remove(sessionID)
-            delayedDispatcher?.cancelForSession(sessionID)
+            // 不取消延迟推送：会话删除（包括 opencode 自动清理）不代表用户已看到通知
             debug(`→ 会话已删除, 会话=${sessionID}`)
           }
 
