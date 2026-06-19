@@ -1,6 +1,6 @@
 {
   "name": "@freely01/opencode-notify",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "opencode 通知插件 - 监听会话事件并通过多渠道推送通知",
   "type": "module",
   "main": "index.ts",
