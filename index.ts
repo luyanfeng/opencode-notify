@@ -2,7 +2,8 @@ import type { Plugin } from "@opencode-ai/plugin"
 import type { PluginConfig } from "./config.js"
 import { resolveConfig, loadYamlConfig, mergeConfig, ensureConfigFile } from "./config.js"
 import { route } from "./events.js"
-import { enrich } from "./message.js"
+import { enrich, formatTitle, defaultBody, formatBody } from "./message.js"
+import type { Message } from "./message.js"
 import { Dispatcher } from "./dispatcher.js"
 import { FileStore } from "./store.js"
 import { SystemSender } from "./senders/system/index.js"
@@ -106,13 +107,55 @@ const plugin: Plugin = async (_input, options) => {
             debug(`→ 会话已删除, 会话=${sessionID}`)
           }
 
+          // 跟踪会话状态
+          if (type === "session.status") {
+            const st = properties.status?.type
+            if (st) tracker.updateStatus(sessionID, st)
+            debug(`→ 会话状态更新, 会话=${sessionID} status=${st ?? "?"}`)
+          }
+          if (type === "session.idle") {
+            tracker.updateStatus(sessionID, "idle")
+            debug(`→ 会话空闲, 会话=${sessionID}`)
+          }
+
           // === 通知判定 ===
 
           const suppressEvents = cfg.suppress_events_when_active ?? []
 
           // 先路由事件，看是否匹配通知
-          const msg = route(event, cfg.events)
-          if (!msg) return  // 不关心的事件
+          let msg = route(event, cfg.events)
+
+          // idle 事件：由会话状态机处理 run_completed
+          const isIdle = type === "session.idle"
+            || (type === "session.status" && properties?.status?.type === "idle")
+
+          if (!msg && isIdle) {
+            if (cfg.events?.includes("run_completed")) {
+              // 子会话 idle → 跳过（background task 完成，静默）
+              if (tracker.isBackground(sessionID)) {
+                debug(`→ 子会话 ${sessionID} idle, 跳过`)
+                return
+              }
+              // 主会话 idle 但仍有子会话在跑 → 跳过
+              if (tracker.hasActiveChildren(sessionID)) {
+                debug(`→ 主会话 ${sessionID} idle 但子会话活跃中, 跳过`)
+                return
+              }
+              // 全部任务完成 → run_completed
+              debug(`→ 全部任务完成 (${sessionID}), 发送 run_completed`)
+              msg = {
+                agent: "opencode",
+                event: "run_completed",
+                sessionID,
+                title: formatTitle("run_completed"),
+                body: defaultBody("run_completed"),
+              }
+              msg.body = formatBody(msg)
+            }
+            if (!msg) return  // run_completed 未启用或未匹配
+          } else if (!msg) {
+            return  // 其他不关心的事件
+          }
 
           // 注入会话主题，增强通知内容
           const sessionTopic = tracker.getSessionTopic(sessionID)
@@ -121,6 +164,7 @@ const plugin: Plugin = async (_input, options) => {
           debug(`→ 匹配通知: ${msg.event} sessionTopic="${sessionTopic ?? ""}"`)
 
           // 子会话（background task）：非失败事件跳过，失败仍通知
+          // run_completed 已在上层排除子会话，此处的 isBackground 只对 route 事件生效
           if (tracker.isBackground(sessionID) && msg.event !== "run_failed") {
             debug(`→ 子会话(background task) ${sessionID} 跳过通知 (${msg.event})`)
             return

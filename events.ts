@@ -10,10 +10,11 @@ import { formatTitle, formatBody, defaultBody } from "./message.js"
  * 实际事件类型 (from @opencode-ai/sdk gen types):
  * - "permission.updated"      → 新权限请求
  * - "permission.replied"      → 权限已回复
- * - "session.idle"            → 会话空闲（等待输入）
- * - "session.status"          → 会话状态变化（含 idle/busy/retry）
  * - "session.error"           → 会话错误
  * - "session.created"         → 新会话
+ *
+ * 注意：session.idle / session.status(idle) 不在本函数处理，
+ * 由 index.ts 中的会话状态机统一走 run_completed 逻辑。
  *
  * @param event opencode 事件对象
  * @param enabledEvents 启用的事件列表，用于过滤
@@ -100,18 +101,8 @@ export function route(
     }
   }
 
-  // 会话空闲 → input_required
-  if (type === "session.idle" && enabled.has("input_required")) {
-    return makeMsg("input_required", defaultBody("input_required"))
-  }
-
-  // session.status 也可能包含 idle 状态
-  if (type === "session.status" && enabled.has("input_required")) {
-    const status = properties.status
-    if (status?.type === "idle") {
-      return makeMsg("input_required", defaultBody("input_required"))
-    }
-  }
+  // session.idle 和 session.status(idle) 已移至 index.ts 处理
+  // 统一走 run_completed 逻辑，此处不再映射到 input_required
 
   return null
 }

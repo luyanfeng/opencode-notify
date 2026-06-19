@@ -58,9 +58,9 @@ wechat_work:
 | 通知事件 | 活跃时行为 | 理由 |
 |---------|:---------:|------|
 | `permission_required` | ✅ 抑制 | 权限弹窗就在屏幕上，看得见 |
-| `input_required` | ✅ 抑制 | TUI 明确在等输入 |
+| `run_completed` | ❌ 不抑制 | 异步结果，人可能走开了 |
 | `run_failed` | ❌ 不抑制 | 异步结果，人可能走开了 |
-| `run_completed` | ❌ 不抑制 | 同上 |
+| `run_cancelled` | ❌ 不抑制 | 异步结果 |
 
 ### 配置
 
@@ -69,7 +69,6 @@ suppress_when_active: true           # 开启智能抑制
 activity_timeout_ms: 15000           # 15 秒无操作视为不活跃
 suppress_events_when_active:         # 活跃时抑制哪些事件
   - permission_required
-  - input_required
 ```
 
 ---
@@ -250,15 +249,16 @@ dedupe_seconds: 60    # 60 秒内不重复发送
 | 事件 | 说明 |
 |------|------|
 | `permission_required` | Agent 需要用户授权（推荐开启） |
-| `input_required` | Agent 等待用户输入（推荐开启） |
+| `run_completed` | Agent 完成一段工作（推荐开启） |
 | `run_failed` | 任务执行失败（推荐开启） |
-| `run_completed` | 任务完成（暂未实现） |
+| `run_cancelled` | 用户主动中断（推荐开启） |
 
 ```yaml
 events:
   - permission_required
-  - input_required
+  - run_completed
   - run_failed
+  - run_cancelled
 ```
 
 ---
@@ -298,8 +298,9 @@ wechat_work:
 # 只订阅关心的事件
 events:
   - permission_required
-  - input_required
+  - run_completed
   - run_failed
+  - run_cancelled
 
 # 重要事件延迟补偿推送到微信
 remote_delay_channels:

@@ -67,14 +67,14 @@ channels:
 
 events:
   - permission_required
-  - input_required
+  - run_completed
   - run_failed
+  - run_cancelled
 
 suppress_when_active: true
 activity_timeout_ms: 15000
 suppress_events_when_active:
   - permission_required
-  - input_required
 
 log:
   level: info
@@ -104,9 +104,10 @@ bun run cli.ts --config
 | 事件值 | 说明 |
 |--------|------|
 | `permission_required` | Agent 需要用户授权（执行命令、读写文件等） |
-| `input_required` | Agent 等待用户输入 |
+| `run_completed` | Agent 完成一段工作，等待用户输入 |
 | `run_failed` | 任务执行失败 |
-| `run_completed` | 任务执行完成（技术预留，暂未实现） |
+| `run_cancelled` | 用户主动中断任务 |
+| `input_required` | （已废弃）不再触发任何通知 |
 
 ### 系统消息通知
 
@@ -222,12 +223,12 @@ Terminator 窗口是当前 X 活跃窗口？     ← xprop -root _NET_ACTIVE_WIN
 
 ## 事件映射
 
-| 通知事件 | 触发场景 | opencode 事件 |
-|----------|---------|---------------|
+| 通知事件 | 触发场景 | 触发源 |
+|----------|---------|--------|
 | `permission_required` | Agent 需要授权 | `permission.asked` / `question.asked` |
-| `input_required` | Agent 等待用户输入 | `session.idle` / `session.status(idle)` |
+| `run_completed` | Agent 完成一段工作 | 会话状态机（所有会话空闲时） |
 | `run_failed` | 任务执行失败 | `session.error` |
-| `run_completed` | 任务完成（预留） | — |
+| `run_cancelled` | 用户主动中断 | `session.error` (MessageAbortedError) |
 
 ---
 
@@ -268,14 +269,13 @@ channels:
     enabled: false
     webhook_url: ""
 
-events: [permission_required, input_required, run_failed]
+events: [permission_required, run_completed, run_failed, run_cancelled]
 dedupe_seconds: 60
 
 suppress_when_active: true
 activity_timeout_ms: 15000
 suppress_events_when_active:
   - permission_required
-  - input_required
 session_stale_timeout_ms: 600000
 
 remote_delay_channels: []
@@ -293,9 +293,9 @@ log:
 | 事件 | 活跃时行为 |
 |------|:---------:|
 | `permission_required` | ✅ 抑制（屏上可见） |
-| `input_required` | ✅ 抑制（TUI 在等输入） |
+| `run_completed` | ❌ 不抑制（异步结果，人可能走开） |
 | `run_failed` | ❌ 不抑制（异步结果） |
-| `run_completed` | ❌ 不抑制（预留） |
+| `run_cancelled` | ❌ 不抑制（异步结果） |
 
 ---
 

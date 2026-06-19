@@ -26,6 +26,8 @@ export interface SessionInfo {
   userPrompt?: string
   /** opencode 自动生成的会话主题（session.updated 时更新） */
   sessionTopic?: string
+  /** 会话状态：busy | idle | retry | deleted */
+  status?: string
 }
 
 export function isBackgroundSession(info: SessionInfo): boolean {
@@ -92,6 +94,7 @@ export class SessionTracker {
         createdAt: Date.now(),
         parentID,
         userPrompt,
+        status: "busy",  // 新创建的会话默认为忙碌
       })
     }
   }
@@ -101,6 +104,29 @@ export class SessionTracker {
     if (sessionID === "unknown") return false
     const info = this.sessions.get(sessionID)
     return info ? isBackgroundSession(info) : false
+  }
+
+  /** 更新会话状态（来自 session.status / session.idle） */
+  updateStatus(sessionID: string, status: string): void {
+    if (sessionID === "unknown" || !status) return
+    const info = this.sessions.get(sessionID)
+    if (info) info.status = status
+  }
+
+  /**
+   * 检查某会话是否有活跃子会话
+   * 活跃 = 状态为 busy/created（尚未 idle 或 deleted）
+   */
+  hasActiveChildren(sessionID: string): boolean {
+    if (sessionID === "unknown") return false
+    for (const [, info] of this.sessions) {
+      if (info.parentID === sessionID) {
+        const st = info.status
+        // 未收到过 status 事件的子会话视为活跃（刚创建还在跑）
+        if (!st || (st !== "idle" && st !== "deleted")) return true
+      }
+    }
+    return false
   }
 
   /** 更新会话主题（opencode 自动生成，来自 session.updated） */
