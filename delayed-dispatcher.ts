@@ -17,6 +17,8 @@ interface PendingEntry {
   count: number
   /** 定时器 ID，用于取消 */
   timeoutId: ReturnType<typeof setTimeout> | null
+  /** 条目创建时间戳，用于防止立即取消的竞态 */
+  createdAt: number
 }
 
 export class DelayedDispatcher {
@@ -56,7 +58,7 @@ export class DelayedDispatcher {
       // 该渠道已有待发延迟 → 跳过（不重复调度）
       if (chMap.has(ch)) continue
 
-      chMap.set(ch, { count: 0, timeoutId: null })
+      chMap.set(ch, { count: 0, timeoutId: null, createdAt: Date.now() })
       this.scheduleOne(sid, ch, msg)
       info(`远程延迟: 已调度 会话=${sid} 渠道=${ch} 延迟=${this.delayMs}ms`)
       info(`[DIAG] schedule: msg.event=${msg.event} title=${msg.title?.slice(0, 40)}`)
@@ -68,17 +70,43 @@ export class DelayedDispatcher {
    *
    * 在用户活跃事件或会话删除时调用。
    */
+  /**
+   * 取消指定会话的用户活动触发的待发延迟通知
+   *
+   * 保护规则：刚建立（< delayMs 的 1/4）的条目不取消，
+   * 防止 opencode 在任务完成后的内部事件（如 tui.command.execute）
+   * 竞态取消刚调度的延迟通知。
+   */
   cancelForSession(sessionID: string): void {
     const chMap = this.pending.get(sessionID)
     if (!chMap) return
 
+    const now = Date.now()
+    const protectMs = Math.max(5000, this.delayMs / 4)  // 至少 5 秒，最多 delayMs/4
+
+    const remaining: Array<[string, PendingEntry]> = []
     for (const [ch, entry] of chMap) {
-      if (entry.timeoutId !== null) {
-        clearTimeout(entry.timeoutId)
+      if (now - entry.createdAt < protectMs) {
+        // 刚建立 → 跳过（不取消）
+        remaining.push([ch, entry])
+        debug(`远程延迟: 保护新条目 会话=${sessionID} 渠道=${ch} (已存活${now - entry.createdAt}ms < ${protectMs}ms)`)
+      } else {
+        // 已稳定存在 → 正常取消
+        if (entry.timeoutId !== null) {
+          clearTimeout(entry.timeoutId)
+        }
       }
     }
-    this.pending.delete(sessionID)
-    info(`远程延迟: 已取消 会话=${sessionID}`)
+
+    if (remaining.length === 0) {
+      this.pending.delete(sessionID)
+      info(`远程延迟: 已取消 会话=${sessionID}`)
+    } else {
+      // 仍有受保护条目，重建 map
+      const newMap = new Map(remaining)
+      this.pending.set(sessionID, newMap)
+      info(`远程延迟: 部分取消 会话=${sessionID} (${remaining.length} 个条目受保护保留)`)
+    }
   }
 
   /**
