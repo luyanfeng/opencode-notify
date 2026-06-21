@@ -1,7 +1,7 @@
 import type { Message } from "./message.js"
 import type { Sender } from "./senders/types.js"
 import { error, warn, info, debug } from "./log.js"
-import { isTerminalOccluded } from "./terminator-detect.js"
+import { isTerminalOccluded, getSystemIdleMs } from "./terminator-detect.js"
 
 /**
  * 远程延迟通知调度器
@@ -140,6 +140,41 @@ export class DelayedDispatcher {
   }
 
   /**
+   * 判断是否应取消延迟推送（用户已回到电脑前）
+   *
+   * 两层检测：
+   *   1. isTerminalOccluded() === true → 用户在别的应用/子屏 → 不取消（发）
+   *   2. 本屏可见（false/null）→ 查系统空闲时间：
+   *       空闲时间 < 延迟窗口 → 用户有近期输入，已回来 → 取消
+   *       空闲时间 >= 延迟窗口 → 用户一直闲置 → 不取消（发）
+   *       无法检测空闲时间 → 保守继续发
+   *
+   * @returns true=应取消，false=应继续发送
+   */
+  private shouldCancel(sid: string): boolean {
+    const occluded = isTerminalOccluded()
+
+    // 用户在别的窗口/子屏 → 肯定没看本终端，继续发
+    if (occluded === true) return false
+
+    // 本终端可能可见 → 查系统空闲时间判断用户是否真在
+    const idleMs = getSystemIdleMs()
+    if (idleMs !== null && idleMs < this.delayMs) {
+      info(`远程延迟: 用户已回到电脑前（空闲${Math.round(idleMs / 1000)}秒 < 延迟${this.delayMs / 1000}秒），取消会话=${sid} 的延迟推送`)
+      this.cancelForSession(sid)
+      return true
+    }
+
+    // 空闲时间 >= 延迟窗口 或 无法检测 → 继续发
+    if (idleMs !== null) {
+      debug(`远程延迟: 用户持续空闲(${Math.round(idleMs / 1000)}秒 >= ${this.delayMs / 1000}秒)，继续发送 会话=${sid}`)
+    } else {
+      debug(`远程延迟: 无法检测系统空闲时间，继续发送 会话=${sid}`)
+    }
+    return false
+  }
+
+  /**
    * 调度单次延迟发送
    */
   private scheduleOne(sid: string, ch: string, msg: Message): void {
@@ -154,12 +189,8 @@ export class DelayedDispatcher {
       try {
         entry.timeoutId = null
 
-        // 发送前检查：如果终端子屏可见（用户已回到电脑前），取消本会话的所有待发延迟
-        if (isTerminalOccluded() === false) {
-          info(`远程延迟: 用户已回到终端，取消会话=${sid} 的延迟推送`)
-          this.cancelForSession(sid)
-          return
-        }
+        // 判断用户是否在电脑前：窗口/子屏可见性 + 系统空闲时间
+        if (this.shouldCancel(sid)) return
 
         // 在正文追加延迟标记（第几次 / 共几次 / 下次时间）
         const sendCount = entry.count + 1  // 1-based
