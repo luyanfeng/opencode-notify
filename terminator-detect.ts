@@ -18,7 +18,7 @@
  */
 
 import { execSync } from "node:child_process"
-import { debug } from "./log.js"
+import { debug, info } from "./log.js"
 
 /** 当前进程的 TERMINATOR_UUID */
 const MY_UUID = process.env.TERMINATOR_UUID ?? null
@@ -92,6 +92,8 @@ export function isTerminalOccluded(): boolean | null {
  * @returns 空闲毫秒数，或 null（所有检测方法均不可用）
  */
 export function getSystemIdleMs(): number | null {
+  let result: number | null = null
+
   // 策略 1: GNOME Mutter IdleMonitor（返回毫秒）
   try {
     const out = execSync(
@@ -99,37 +101,41 @@ export function getSystemIdleMs(): number | null {
       { encoding: "utf-8", timeout: 3000 },
     ).trim()
     const m = out.match(/t\s+(\d+)/)
-    if (m) return parseInt(m[1], 10)
+    if (m) result = parseInt(m[1], 10)
   } catch {
     // 静默忽略
   }
 
-  // 策略 2: gdbus 备用
-  try {
-    const out = execSync(
-      `gdbus call --session --dest org.gnome.Mutter.IdleMonitor --object-path /org/gnome/Mutter/IdleMonitor/Core --method org.gnome.Mutter.IdleMonitor.GetIdletime 2>/dev/null`,
-      { encoding: "utf-8", timeout: 3000 },
-    ).trim()
-    const m = out.match(/uint64\s+(\d+)/)
-    if (m) return parseInt(m[1], 10)
-  } catch {
-    // 静默忽略
+  if (result === null) {
+    // 策略 2: gdbus 备用
+    try {
+      const out = execSync(
+        `gdbus call --session --dest org.gnome.Mutter.IdleMonitor --object-path /org/gnome/Mutter/IdleMonitor/Core --method org.gnome.Mutter.IdleMonitor.GetIdletime 2>/dev/null`,
+        { encoding: "utf-8", timeout: 3000 },
+      ).trim()
+      const m = out.match(/uint64\s+(\d+)/)
+      if (m) result = parseInt(m[1], 10)
+    } catch {
+      // 静默忽略
+    }
   }
 
-  // 策略 3: freedesktop.org ScreenSaver（返回秒，需转毫秒）
-  try {
-    const out = execSync(
-      `busctl --user call org.freedesktop.ScreenSaver /ScreenSaver org.freedesktop.ScreenSaver.GetSessionIdleTime 2>/dev/null`,
-      { encoding: "utf-8", timeout: 3000 },
-    ).trim()
-    const m = out.match(/u\s+(\d+)/)
-    if (m) return parseInt(m[1], 10) * 1000
-  } catch {
-    // 静默忽略
+  if (result === null) {
+    // 策略 3: freedesktop.org ScreenSaver（返回秒，需转毫秒）
+    try {
+      const out = execSync(
+        `busctl --user call org.freedesktop.ScreenSaver /ScreenSaver org.freedesktop.ScreenSaver.GetSessionIdleTime 2>/dev/null`,
+        { encoding: "utf-8", timeout: 3000 },
+      ).trim()
+      const m = out.match(/u\s+(\d+)/)
+      if (m) result = parseInt(m[1], 10) * 1000
+    } catch {
+      // 静默忽略
+    }
   }
 
-  debug(`getSystemIdleMs: 所有检测方法均不可用`)
-  return null
+  info(`[DIAG] getSystemIdleMs: 空闲时间=${result}ms${result === null ? ' (所有方法不可用)' : ''}`)
+  return result
 }
 
 /** 取 UUID 前 8 位用于日志 */
