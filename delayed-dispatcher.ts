@@ -61,7 +61,6 @@ export class DelayedDispatcher {
       chMap.set(ch, { count: 0, timeoutId: null, createdAt: Date.now() })
       this.scheduleOne(sid, ch, msg)
       info(`远程延迟: 已调度 会话=${sid} 渠道=${ch} 延迟=${this.delayMs}ms`)
-      info(`[DIAG] schedule: msg.event=${msg.event} title=${msg.title?.slice(0, 40)}`)
     }
   }
 
@@ -182,18 +181,11 @@ export class DelayedDispatcher {
    */
   private shouldCancel(sid: string): boolean {
     const occluded = isTerminalOccluded()
-    info(`[DIAG] shouldCancel: occluded=${occluded} 会话=${sid}`)
-
     // 用户在别的窗口/子屏 → 肯定没看本终端，继续发
-    if (occluded === true) {
-      info(`[DIAG] shouldCancel: occluded=true → 不取消`)
-      return false
-    }
+    if (occluded === true) return false
 
     // 本终端可能可见 → 查系统空闲时间判断用户是否真在
     const idleMs = getSystemIdleMs()
-    info(`[DIAG] shouldCancel: idleMs=${idleMs} delayMs=${this.delayMs} 会话=${sid}`)
-
     if (idleMs !== null && idleMs < this.delayMs) {
       info(`远程延迟: 用户已回到电脑前（空闲${Math.round(idleMs / 1000)}秒 < 延迟${this.delayMs / 1000}秒），取消会话=${sid} 的延迟推送`)
       this.cancelForSession(sid)
@@ -202,9 +194,9 @@ export class DelayedDispatcher {
 
     // 空闲时间 >= 延迟窗口 或 无法检测 → 继续发
     if (idleMs !== null) {
-      info(`[DIAG] shouldCancel: idleMs>=delayMs → 不取消, 继续发送 会话=${sid}`)
+      debug(`远程延迟: 用户持续空闲(${Math.round(idleMs / 1000)}秒 >= ${this.delayMs / 1000}秒)，继续发送 会话=${sid}`)
     } else {
-      info(`[DIAG] shouldCancel: idleMs=null → 不取消, 继续发送 会话=${sid}`)
+      debug(`远程延迟: 无法检测系统空闲时间，继续发送 会话=${sid}`)
     }
     return false
   }
@@ -223,8 +215,6 @@ export class DelayedDispatcher {
     entry.timeoutId = setTimeout(() => {
       try {
         entry.timeoutId = null
-
-        info(`[DIAG] scheduleOne TIMEOUT FIRED 会话=${sid} 渠道=${ch} count=${entry.count} delayMs=${this.delayMs}`)
 
         // 判断用户是否在电脑前：窗口/子屏可见性 + 系统空闲时间
         if (this.shouldCancel(sid)) return

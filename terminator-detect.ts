@@ -18,7 +18,7 @@
  */
 
 import { execSync } from "node:child_process"
-import { debug, info } from "./log.js"
+import { debug } from "./log.js"
 
 /** 当前进程的 TERMINATOR_UUID */
 const MY_UUID = process.env.TERMINATOR_UUID ?? null
@@ -134,7 +134,6 @@ export function getSystemIdleMs(): number | null {
     }
   }
 
-  info(`[DIAG] getSystemIdleMs: 空闲时间=${result}ms${result === null ? ' (所有方法不可用)' : ''}`)
   return result
 }
 
