@@ -4,6 +4,8 @@ opencode 通知插件 — 监听会话关键事件，通过多渠道推送通知
 
 > ⚠️ **个人项目，按需使用** — 主要在 Ubuntu 24.04 (X11) 环境测试，其他平台可能存在问题。
 > 如有问题欢迎提 [Issue](https://github.com/luyanfeng/opencode-notify/issues)，不保证及时响应和修复。
+>
+> **版本发布说明**：本项目不再在 GitHub 发 Release 版本，请关注 npm 包 [@freely01/opencode-notify](https://www.npmjs.com/package/@freely01/opencode-notify) 的最新版本。
 
 ## 功能一览
 
