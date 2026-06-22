@@ -348,7 +348,7 @@ remote_delay_channels: []            # 启用的延迟推送渠道列表
 # 日志等级控制输出详细程度，日常使用 info 即可。
 # ---------------------------------------------------------------------------
 log:
-  level: info                        # 日志等级: off | error | warn | info | debug
+  level: off                         # 日志等级: off | error | warn | info | debug
                                      #   off   - 完全禁用日志输出
                                      #   error - 仅记录错误
                                      #   warn  - 错误 + 警告
@@ -431,7 +431,7 @@ const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "acti
   remote_delay_channels: [],
   remote_delay_seconds: 60,
   remote_delay_max_count: 3,
-  log: { level: "info", file: undefined },
+  log: { level: "off", file: undefined },
 }
 
 /**
