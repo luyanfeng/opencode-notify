@@ -110,5 +110,9 @@ export function enrich(msg: Message, sessionTopic?: string, userPrompt?: string)
     msg.body = msg.body.replace(/^(详情：.*)$/m, `$1 — ${shortTitle(userPrompt, 80)}`)
   }
 
+  if (sessionTopic) {
+    msg.body = msg.body.replace(/^(时间：.*)$/m, `主题：${sessionTopic}\n$1`)
+  }
+
   return msg
 }
