@@ -150,6 +150,27 @@ export class SessionTracker {
     return this.sessions.get(sessionID)?.sessionTopic
   }
 
+  /** 设置用户输入内容 */
+  setUserPrompt(sessionID: string, prompt: string): void {
+    if (sessionID === "unknown" || !prompt) return
+    const existing = this.sessions.get(sessionID)
+    if (existing) {
+      existing.userPrompt = prompt
+    } else {
+      this.sessions.set(sessionID, {
+        sessionID,
+        lastActivity: Date.now(),
+        createdAt: Date.now(),
+        userPrompt: prompt,
+      })
+    }
+  }
+
+  /** 获取用户输入内容 */
+  getUserPrompt(sessionID: string): string | undefined {
+    return this.sessions.get(sessionID)?.userPrompt
+  }
+
   /** 移除会话 */
   remove(sessionID: string): void {
     this.sessions.delete(sessionID)

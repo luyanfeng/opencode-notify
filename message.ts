@@ -12,6 +12,8 @@ export interface Message {
   body: string
   /** 工作目录 */
   workspace?: string
+  /** 用户最后一次输入内容 */
+  userPrompt?: string
 }
 
 /** 事件中文标签映射 */
@@ -92,23 +94,21 @@ function shortTitle(title: string, maxLen = 20): string {
 /**
  * 增强通知消息：注入会话上下文
  *
- * 上下文全部来自 `session.updated` 的 `info.title`（opencode 自动生成或用户输入），
- * `session.created` 的 `info.title` 可能是 "New session - ..." 占位符，不可靠，不再使用。
- *
- * - 标题：`[主题] 事件标签`（替换 `opencode - 事件标签`）
- * - 正文：在 `时间` 行前插入 `主题` 行
+ * - 标题：`[用户输入前16字] 事件标签`（有用户输入时替换 `opencode - 事件标签`）
+ * - 正文：`用户输入` 追加到 `详情` 行末尾
  *
  * @param msg 原始通知消息
  * @param sessionTopic 会话主题（来自 session.updated）
+ * @param userPrompt 用户输入内容（来自 chat.message hook）
  * @returns 增强后的消息（原地修改并返回）
  */
-export function enrich(msg: Message, sessionTopic?: string): Message {
-  if (!sessionTopic) return msg
-
+export function enrich(msg: Message, sessionTopic?: string, userPrompt?: string): Message {
   const label = EVENT_LABELS[msg.event] ?? msg.event
-  msg.title = `[${shortTitle(sessionTopic)}] ${label}`
 
-  // 在"时间"行前插入"主题"行
-  msg.body = msg.body.replace(/^(时间：.*)$/m, `主题：${sessionTopic}\n$1`)
+  if (userPrompt) {
+    msg.title = `[${shortTitle(userPrompt, 16)}] ${label}`
+    msg.body = msg.body.replace(/^(详情：.*)$/m, `$1 — ${shortTitle(userPrompt, 80)}`)
+  }
+
   return msg
 }

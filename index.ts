@@ -67,6 +67,23 @@ const plugin: Plugin = async (_input, options) => {
       + `terminator_detect=${!!process.env.TERMINATOR_UUID}`)
 
     return {
+      /**
+       * chat.message — 用户发送新消息时回调
+       * 从 parts 中提取 TextPart.text 作为用户输入内容
+       */
+      "chat.message": async (_input, output) => {
+        const { message, parts } = output
+        const sessionID = message.sessionID
+        if (!sessionID || message.role !== "user") return
+
+        const textParts = parts.filter(p => p.type === "text" && !p.synthetic)
+        const userText = textParts.map(p => (p as any).text ?? "").filter(Boolean).join("\n")
+        if (userText) {
+          debug(`→ chat.message: 会话=${sessionID}, 输入="${userText.slice(0, 200)}"`)
+          tracker.setUserPrompt(sessionID, userText.slice(0, 1000))
+        }
+      },
+
       // event 总线 — 所有事件通过此钩子
       event: async ({ event }) => {
         let type = ""
@@ -157,11 +174,12 @@ const plugin: Plugin = async (_input, options) => {
             return  // 其他不关心的事件
           }
 
-          // 注入会话主题，增强通知内容
+          // 注入会话主题和用户输入，增强通知内容
           const sessionTopic = tracker.getSessionTopic(sessionID)
-          if (sessionTopic) enrich(msg, sessionTopic)
+          const userPrompt = tracker.getUserPrompt(sessionID)
+          enrich(msg, sessionTopic, userPrompt)
 
-          debug(`→ 匹配通知: ${msg.event} sessionTopic="${sessionTopic ?? ""}"`)
+          debug(`→ 匹配通知: ${msg.event} topic="${sessionTopic ?? ""}" prompt="${(userPrompt ?? "").slice(0, 80)}"`)
 
           // 子会话（background task）：非失败事件跳过，失败仍通知
           // run_completed 已在上层排除子会话，此处的 isBackground 只对 route 事件生效
