@@ -15,9 +15,11 @@
  *   - Terminator 不活跃（浏览器/IDE）：强制通知
  *   - 本屏聚焦：不通知
  *   - 另一子屏聚焦（分屏或最大化）：强制通知
+ *
+ * 性能：检测结果缓存 5 秒 TTL，避免高频事件重复执行 execSync。
  */
 
-import { execSync, spawn } from "node:child_process"
+import { execSync } from "node:child_process"
 import { debug } from "./log.js"
 
 /** 当前进程的 TERMINATOR_UUID */
@@ -29,6 +31,16 @@ const DBUS_PATH = process.env.TERMINATOR_DBUS_PATH ?? null
 
 /** 是否已确认在 Terminator 中 */
 let insideTerminator: boolean | null = null
+
+/** 遮挡检测结果缓存（5 秒 TTL） */
+let cachedOccluded: boolean | null = null
+let cachedAt = 0
+const CACHE_TTL = 5_000
+
+/** 系统空闲时间缓存（3 秒 TTL） */
+let cachedIdleMs: number | null = null
+let cachedIdleAt = 0
+const IDLE_CACHE_TTL = 3_000
 
 /**
  * 检测当前子屏幕是否被遮挡（不可见）
@@ -45,38 +57,49 @@ export function isTerminalOccluded(): boolean | null {
 
   insideTerminator = true
 
+  // 缓存命中
+  const now = Date.now()
+  if (cachedOccluded !== null && now - cachedAt < CACHE_TTL) {
+    return cachedOccluded
+  }
+
   // ─── 第一级：X 窗口级别 ────────────────────────────────────────────────
   // Terminator 窗口是否是当前 X 活跃窗口？
   const terminatorActive = isTerminatorWindowActive()
 
   if (terminatorActive === false) {
-    // 用户在其他应用中（浏览器、IDE 等），本屏不可见
     debug(`Terminator 窗口非活跃（用户在其他应用中），判定为遮挡`)
+    cachedOccluded = true
+    cachedAt = now
     return true
   }
 
   if (terminatorActive === true) {
     // ─── 第二级：聚焦终端检测 ──────────────────────────────────────────
-    // Terminator 窗口活跃，检查用户聚焦的是不是本屏
     const focused = queryFocusedTerminal()
 
     if (focused !== null) {
       if (focused === MY_UUID) {
         debug(`Terminator 本屏聚焦，判定为可见`)
+        cachedOccluded = false
+        cachedAt = now
         return false
       }
-      // 用户聚焦在另一个子屏上 → 本屏不可见（无论分屏还是最大化）
       debug(`Terminator 用户聚焦在其他子屏(${shortId(focused)})，判定为遮挡`)
+      cachedOccluded = true
+      cachedAt = now
       return true
     }
 
-    // 无法查询焦点状态，保守假设可见
     debug(`Terminator 窗口活跃，无法查询焦点状态，保守假设不遮挡`)
+    cachedOccluded = false
+    cachedAt = now
     return false
   }
 
-  // 无法确定 X 窗口状态（xprop 失败），保守假设可见
   debug(`无法检测窗口状态（xprop 失败），保守假设不遮挡`)
+  cachedOccluded = false
+  cachedAt = now
   return false
 }
 
@@ -92,6 +115,12 @@ export function isTerminalOccluded(): boolean | null {
  * @returns 空闲毫秒数，或 null（所有检测方法均不可用）
  */
 export function getSystemIdleMs(): number | null {
+  // 缓存命中
+  const now = Date.now()
+  if (cachedIdleMs !== null && now - cachedIdleAt < IDLE_CACHE_TTL) {
+    return cachedIdleMs
+  }
+
   let result: number | null = null
 
   // 策略 1: GNOME Mutter IdleMonitor（返回毫秒）
@@ -134,6 +163,8 @@ export function getSystemIdleMs(): number | null {
     }
   }
 
+  cachedIdleMs = result
+  cachedIdleAt = now
   return result
 }
 

@@ -15,6 +15,8 @@ import { isTerminalOccluded, getSystemIdleMs } from "./terminator-detect.js"
 interface PendingEntry {
   /** 当前已发送次数 */
   count: number
+  /** 连续失败次数 */
+  failCount: number
   /** 定时器 ID，用于取消 */
   timeoutId: ReturnType<typeof setTimeout> | null
   /** 条目创建时间戳，用于防止立即取消的竞态 */
@@ -58,7 +60,7 @@ export class DelayedDispatcher {
       // 该渠道已有待发延迟 → 跳过（不重复调度）
       if (chMap.has(ch)) continue
 
-      chMap.set(ch, { count: 0, timeoutId: null, createdAt: Date.now() })
+      chMap.set(ch, { count: 0, failCount: 0, timeoutId: null, createdAt: Date.now() })
       this.scheduleOne(sid, ch, msg)
       info(`远程延迟: 已调度 会话=${sid} 渠道=${ch} 延迟=${this.delayMs}ms`)
     }
@@ -227,22 +229,24 @@ export class DelayedDispatcher {
         if (sender) {
           sender.send(msg).catch((err) => {
             error(`远程延迟推送失败 会话=${sid} 渠道=${ch}: ${err}`)
+            entry.failCount = (entry.failCount ?? 0) + 1
           })
           info(`远程延迟: 已推送 会话=${sid} 渠道=${ch}`)
         }
 
         // 检查是否需要继续重试
         entry.count++
-        if (entry.count < this.maxCount) {
+        if (entry.count >= this.maxCount) {
+          chMap.delete(ch)
+          if (chMap.size === 0) this.pending.delete(sid)
+          info(`远程延迟: 已完成 会话=${sid} 渠道=${ch} (推送${entry.count}次)`)
+        } else if (entry.failCount >= 3) {
+          chMap.delete(ch)
+          if (chMap.size === 0) this.pending.delete(sid)
+          error(`远程延迟: 连续失败${entry.failCount}次，放弃 会话=${sid} 渠道=${ch}`)
+        } else {
           this.scheduleOne(sid, ch, msg)
           debug(`远程延迟: 重试 ${entry.count}/${this.maxCount} 会话=${sid} 渠道=${ch} 下次延迟=${this.getDelayMs(entry.count)}ms`)
-        } else {
-          // 达到最大次数，清理
-          chMap.delete(ch)
-          if (chMap.size === 0) {
-            this.pending.delete(sid)
-          }
-          info(`远程延迟: 已完成 会话=${sid} 渠道=${ch} (推送${entry.count}次)`)
         }
       } catch (e) {
         error(`远程延迟回调异常 会话=${sid} 渠道=${ch}: ${e instanceof Error ? e.message : String(e)}`)
