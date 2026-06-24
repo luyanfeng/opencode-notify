@@ -399,11 +399,11 @@ export function mergeConfig(base: PluginConfig, overrides: PluginConfig): Plugin
     channels: {
       ...(base.channels ?? {}),
       ...(overrides.channels ?? {}),
-      system_message: { ...(base.channels?.system_message ?? {}), ...(overrides.channels?.system_message ?? {}) } as any,
-      screen_flash: { ...(base.channels?.screen_flash ?? {}), ...(overrides.channels?.screen_flash ?? {}) } as any,
-      wechat_work: { ...(base.channels?.wechat_work ?? {}), ...(overrides.channels?.wechat_work ?? {}) } as any,
-      feishu: { ...(base.channels?.feishu ?? {}), ...(overrides.channels?.feishu ?? {}) } as any,
-      custom_webhook: { ...(base.channels?.custom_webhook ?? {}), ...(overrides.channels?.custom_webhook ?? {}) } as any,
+      system_message: { ...(base.channels?.system_message ?? {}), ...(overrides.channels?.system_message ?? {}) } as ChannelConfig,
+      screen_flash: { ...(base.channels?.screen_flash ?? {}), ...(overrides.channels?.screen_flash ?? {}) } as ScreenFlashChannelConfig,
+      wechat_work: { ...(base.channels?.wechat_work ?? {}), ...(overrides.channels?.wechat_work ?? {}) } as WechatWorkChannelConfig,
+      feishu: { ...(base.channels?.feishu ?? {}), ...(overrides.channels?.feishu ?? {}) } as FeishuChannelConfig,
+      custom_webhook: { ...(base.channels?.custom_webhook ?? {}), ...(overrides.channels?.custom_webhook ?? {}) } as CustomWebhookChannelConfig,
     },
   }
 }

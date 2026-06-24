@@ -21,12 +21,12 @@ import { formatTitle, formatBody, defaultBody } from "./message.js"
  * @returns Message | null — 不关心的事件返回 null
  */
 export function route(
-  event: { type: string; properties: Record<string, any> },
+  event: { type: string; properties: Record<string, unknown> },
   enabledEvents?: string[],
 ): Message | null {
   const enabled = new Set(enabledEvents ?? [])
   const { type, properties } = event
-  const sessionID = properties.sessionID ?? "unknown"
+  const sessionID = (properties.sessionID as string) ?? "unknown"
 
   /**
    * 构造 Message 的辅助函数
@@ -46,9 +46,8 @@ export function route(
   }
 
   // question.asked — 通用问题询问（权限/确认等均走此事件）
-  // properties 结构待实测确认
   if (type === "question.asked" && enabled.has("permission_required")) {
-    const text = properties.text ?? properties.message ?? ""
+    const text = String(properties.text ?? properties.message ?? "")
     return makeMsg(
       "permission_required",
       text ? `需要确认: ${truncate(text, 200)}` : defaultBody("permission_required"),
@@ -57,12 +56,11 @@ export function route(
 
   // permission.asked — 工具权限请求
   if (type === "permission.asked" && enabled.has("permission_required")) {
-    // properties: { id, sessionID, permission, patterns, metadata, always, tool }
-    // tool 可能是对象 { name, ... } 或字符串
-    const toolName = typeof properties.tool === "object" && properties.tool
-      ? (properties.tool.name ?? properties.tool.type ?? "")
-      : (properties.tool ?? "")
-    const permission = properties.permission ?? ""
+    const tool = properties.tool
+    const toolName = typeof tool === "object" && tool !== null
+      ? (String((tool as Record<string, unknown>).name ?? (tool as Record<string, unknown>).type ?? ""))
+      : (String(tool ?? ""))
+    const permission = String(properties.permission ?? "")
     const desc = [toolName, permission].filter(Boolean).join(" - ")
     return makeMsg(
       "permission_required",
@@ -73,36 +71,32 @@ export function route(
   }
 
   // 会话错误 → run_cancelled / run_failed
-  // MessageAbortedError = 用户主动中断（Ctrl+C 或点击中断按钮）
-  // 其他错误类型 = 真实失败
   if (type === "session.error") {
-    const err = properties.error
+    const err = properties.error as Record<string, unknown> | undefined
 
     // 用户主动中断
     if (err?.name === "MessageAbortedError") {
       if (enabled.has("run_cancelled")) {
-        const msg = err?.data?.message ?? ""
+        const errData = err.data as Record<string, unknown> | undefined
+        const msg = String(errData?.message ?? "")
         return makeMsg(
           "run_cancelled",
           msg ? `用户中断: ${truncate(msg, 200)}` : defaultBody("run_cancelled"),
         )
       }
-      // run_cancelled 未启用 → 跳过，不降级为 run_failed
       return null
     }
 
     // 真实失败
     if (enabled.has("run_failed")) {
-      const errMsg = err?.data?.message ?? err?.name ?? defaultBody("run_failed")
+      const errData = err?.data as Record<string, unknown> | undefined
+      const errMsg = String(errData?.message ?? err?.name ?? defaultBody("run_failed"))
       return makeMsg(
         "run_failed",
-        `错误: ${truncate(String(errMsg), 200)}`,
+        `错误: ${truncate(errMsg, 200)}`,
       )
     }
   }
-
-  // session.idle 和 session.status(idle) 已移至 index.ts 处理
-  // 统一走 run_completed 逻辑，此处不再映射到 input_required
 
   return null
 }

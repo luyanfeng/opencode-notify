@@ -39,7 +39,10 @@ const plugin: Plugin = async (_input, options) => {
     const yamlCfg = loadYamlConfig() ?? {}
     const merged = mergeConfig(yamlCfg, options as PluginConfig ?? {})
     const cfg = resolveConfig(merged)
-    configureLog(cfg.log?.level as any ?? "info", cfg.log?.file)
+    const logLevel: import("./log.js").LogLevel = ["off", "error", "warn", "info", "debug"].includes(cfg.log?.level ?? "")
+      ? (cfg.log?.level as import("./log.js").LogLevel)
+      : "info"
+    configureLog(logLevel, cfg.log?.file)
     const store = new FileStore()
 
     // 构建发送器
