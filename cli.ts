@@ -42,6 +42,19 @@ const SAMPLE_MSG: Message = {
   body: "这是一条来自诊断工具的测试通知，如果收到说明渠道配置正确",
 }
 
+// ─── 工具函数 ────────────────────────────────────────────────────────────────
+
+/** 带超时的 Promise 包装 */
+async function sendWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), ms)
+  try {
+    return await promise
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 // ─── main ───────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -217,7 +230,7 @@ async function cmdTest(channel?: string) {
   for (const [name, enabled, send] of targets) {
     process.stdout.write(`  ${enabled ? "▶" : "⏭"} ${name} ... `)
     try {
-      await send()
+      await sendWithTimeout(send(), 15_000)
       console.log("✅ 成功")
     } catch (e: any) {
       console.log(`❌ 失败: ${e.message}`)

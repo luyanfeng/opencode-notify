@@ -76,21 +76,21 @@ export class CustomWebhookSender implements Sender {
 
   /** 模板插值 */
   private interpolate(tpl: string, msg: Message): string {
-    return tpl
-      .replace(/\{\{title\}\}/g, this.escapeJson(msg.title))
-      .replace(/\{\{body\}\}/g, this.escapeJson(msg.body))
-      .replace(/\{\{event\}\}/g, this.escapeJson(msg.event))
-      .replace(/\{\{agent\}\}/g, this.escapeJson(msg.agent))
-      .replace(/\{\{sessionID\}\}/g, this.escapeJson(msg.sessionID))
+    const vars: Record<string, string> = {
+      title: msg.title,
+      body: msg.body,
+      event: msg.event,
+      agent: msg.agent,
+      sessionID: msg.sessionID,
+    }
+    return tpl.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+      const val = vars[key]
+      return val !== undefined ? JSON.stringify(val).slice(1, -1) : `{{${key}}}`
+    })
   }
 
   /** 转义模板值中的特殊字符（防止破坏 JSON） */
   private escapeJson(s: string): string {
-    return s
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"')
-      .replace(/\n/g, "\\n")
-      .replace(/\r/g, "\\r")
-      .replace(/\t/g, "\\t")
+    return JSON.stringify(s).slice(1, -1)
   }
 }

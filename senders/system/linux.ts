@@ -149,6 +149,7 @@ function focusOpencodeWindow(): void {
 }
 
 export async function notify(title: string, body: string): Promise<void> {
+  let sent = false
   try {
     const proc = spawn("gdbus", [
       "call", "--session",
@@ -159,7 +160,7 @@ export async function notify(title: string, body: string): Promise<void> {
       "0",
       "",
       title,
-      body.replace(/\n/g, "\n\r"),  // 换行
+      body.replace(/\n/g, "\n\r"),
       "[]",
       "{}",
       "10000",
@@ -167,9 +168,15 @@ export async function notify(title: string, body: string): Promise<void> {
       stdio: "ignore",
       detached: true,
     })
+    proc.on("error", () => {
+      if (!sent) { sent = true; fallbackNotify(title, body) }
+    })
+    proc.on("exit", (code) => {
+      if (code !== 0 && !sent) { sent = true; fallbackNotify(title, body) }
+    })
     proc.unref()
   } catch {
-    fallbackNotify(title, body)
+    if (!sent) { sent = true; fallbackNotify(title, body) }
   }
 }
 

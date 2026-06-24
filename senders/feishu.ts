@@ -45,7 +45,7 @@ export class FeishuSender implements Sender {
         elements: [
           {
             tag: "markdown",
-            content: msg.body,
+            content: this.escapeMarkdown(msg.body),
           },
         ],
       },
@@ -72,5 +72,10 @@ export class FeishuSender implements Sender {
         `feishu returned ${response.status}${text ? `: ${text.slice(0, 500)}` : ""}`,
       )
     }
+  }
+
+  /** 转义 Markdown 特殊字符 */
+  private escapeMarkdown(s: string): string {
+    return s.replace(/([*_`#\]])/g, "\\$1")
   }
 }
