@@ -148,9 +148,7 @@ export class DelayedDispatcher {
     // 移除旧标记（从末尾 ─── 分隔线到最后）
     const clean = body.replace(/\n─{3,}[\s\S]*$/, "")
     if (current < total) {
-      const next = new Date(Date.now() + nextDelayMs)
-      const t = `${String(next.getHours()).padStart(2, "0")}:${String(next.getMinutes()).padStart(2, "0")}:${String(next.getSeconds()).padStart(2, "0")}`
-      return `${clean}\n─────────────────\n⚠️ 延迟 第${current}/${total}次（下次约 ${t} / ${this.formatInterval(nextDelayMs)}后）`
+      return `${clean}\n─────────────────\n⚠️ 延迟 第${current}/${total}次（下次约 ${this.formatInterval(nextDelayMs)}后）`
     }
     // 最后一次推送，不显示下次时间
     return `${clean}\n─────────────────\n⚠️ 延迟 第${current}/${total}次（最终）`
