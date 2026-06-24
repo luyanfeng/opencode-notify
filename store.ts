@@ -19,6 +19,8 @@ export class FileStore {
   private lastSent: Record<string, number> = {}
   private reservations: Record<string, number> = {}
   private path: string
+  private saveTimer: ReturnType<typeof setTimeout> | null = null
+  private savePending = false
 
   constructor(path?: string) {
     this.path =
@@ -52,7 +54,7 @@ export class FileStore {
   markSent(key: string, now: number = Date.now()): void {
     this.lastSent[key] = now
     delete this.reservations[key]
-    this.save()
+    this.scheduleSave()
   }
 
   /**
@@ -79,6 +81,16 @@ export class FileStore {
     }
   }
 
+  /** 防抖保存：1 秒内多次调用合并为一次写入 */
+  private scheduleSave(): void {
+    if (this.savePending) return
+    this.savePending = true
+    this.saveTimer = setTimeout(() => {
+      this.savePending = false
+      this.save()
+    }, 1_000)
+  }
+
   private save(): void {
     try {
       const dir = dirname(this.path)
@@ -89,6 +101,18 @@ export class FileStore {
       writeFileSync(this.path, JSON.stringify(data, null, 2), "utf-8")
     } catch (e) {
       error(`去重状态持久化失败: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  /** 立即保存（进程退出时调用） */
+  flush(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    if (this.savePending) {
+      this.savePending = false
+      this.save()
     }
   }
 }

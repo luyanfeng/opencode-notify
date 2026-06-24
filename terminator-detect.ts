@@ -17,7 +17,7 @@
  *   - 另一子屏聚焦（分屏或最大化）：强制通知
  */
 
-import { execSync } from "node:child_process"
+import { execSync, spawn } from "node:child_process"
 import { debug } from "./log.js"
 
 /** 当前进程的 TERMINATOR_UUID */

@@ -278,13 +278,13 @@ function buildSenders(cfg: PluginConfig): BuildSendersResult {
   register("system_message", ch?.system_message?.mode, ch?.system_message?.events,
     () => new SystemSender(), "系统通知")
   register("screen_flash", ch?.screen_flash?.mode, ch?.screen_flash?.events,
-    () => new ScreenFlashSender(ch?.screen_flash!), "屏幕跑马灯")
+    () => new ScreenFlashSender(ch?.screen_flash ?? { mode: "none" }), "屏幕跑马灯")
   register("custom_webhook", ch?.custom_webhook?.mode, ch?.custom_webhook?.events,
-    () => new CustomWebhookSender(ch?.custom_webhook!), "自定义 Webhook")
+    () => new CustomWebhookSender(ch?.custom_webhook ?? { mode: "none" }), "自定义 Webhook")
   register("wechat_work", ch?.wechat_work?.mode, ch?.wechat_work?.events,
-    () => new WechatWorkSender(ch?.wechat_work!), "企业微信")
+    () => new WechatWorkSender(ch?.wechat_work ?? { mode: "none" }), "企业微信")
   register("feishu", ch?.feishu?.mode, ch?.feishu?.events,
-    () => new FeishuSender(ch?.feishu!), "飞书")
+    () => new FeishuSender(ch?.feishu ?? { mode: "none" }), "飞书")
 
   return { senders, senderMap }
 }

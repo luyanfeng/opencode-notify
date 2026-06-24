@@ -7,7 +7,7 @@
  * 所有数据通过 $form.Tag（Form 的真实属性）传递，避免事件回调作用域问题。
  */
 
-import { execSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import type { ScreenFlashChannelConfig } from "../../config.js"
 
 export async function flash(config: ScreenFlashChannelConfig): Promise<void> {
@@ -123,10 +123,15 @@ $sw.Stop()
 $form.Close()
 `.trim()
 
-  execSync(`powershell -NoProfile -Command ${JSON.stringify(psScript)}`, {
-    timeout: Math.max(5000, totalMs + 5000),
+  spawn("powershell", [
+    "-NoProfile",
+    "-Command",
+    psScript,
+  ], {
     stdio: "ignore",
-  })
+    detached: true,
+    timeout: Math.max(5000, totalMs + 5000),
+  }).unref()
   } catch {
     // Windows 跑马灯失败不影响主流程
   }

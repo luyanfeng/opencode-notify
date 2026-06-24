@@ -26,6 +26,7 @@ export async function flash(config: ScreenFlashChannelConfig): Promise<void> {
       stdio: "ignore",
       detached: true,
     })
+    child.on("exit", () => {})  // 回收子进程，避免僵尸
     child.unref()
   } catch {
     // Linux 跑马灯失败不影响主流程

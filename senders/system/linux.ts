@@ -1,10 +1,10 @@
 /**
  * Linux 系统通知
  *
- * 使用 notify-send（来自 libnotify）。
- * 支持点击通知打开 Terminator 终端（通过 --action default）。
- * 桌面发行版通常预装，如缺失可:
- *   apt install libnotify-bin / yum install libnotify
+ * 使用 org.freedesktop.Notifications DBus 接口发送。
+ * 支持 \n\r 换行，X11 和 Wayland 通用。
+ *
+ * 回退：notify-send（无换行支持）。
  */
 
 import { spawn, execSync } from "node:child_process"
@@ -150,9 +150,31 @@ function focusOpencodeWindow(): void {
 
 export async function notify(title: string, body: string): Promise<void> {
   try {
-    // 异步 spawn + --action 实现点击交互
-    // --action 隐含 --wait，子进程驻留直到用户交互或通知超时
-    // 用户点击通知体 → 收到 "default" action → 聚焦 Terminator
+    const proc = spawn("gdbus", [
+      "call", "--session",
+      "--dest", "org.freedesktop.Notifications",
+      "--object-path", "/org/freedesktop/Notifications",
+      "--method", "org.freedesktop.Notifications.Notify",
+      "opencode-notify",
+      "0",
+      "",
+      title,
+      body.replace(/\n/g, "\n\r"),  // 换行
+      "[]",
+      "{}",
+      "10000",
+    ], {
+      stdio: "ignore",
+      detached: true,
+    })
+    proc.unref()
+  } catch {
+    fallbackNotify(title, body)
+  }
+}
+
+function fallbackNotify(title: string, body: string): void {
+  try {
     const proc = spawn("notify-send", [
       "--action", "default=打开",
       "--expire-time", "10000",
@@ -162,13 +184,11 @@ export async function notify(title: string, body: string): Promise<void> {
       detached: true,
     })
 
-    // 收集用户交互结果
     let output = ""
     proc.stdout?.on("data", (chunk: Buffer) => {
       output += chunk.toString()
     })
 
-    // 用户点击通知 → 聚焦 opencode TUI 窗口
     proc.on("close", () => {
       if (output.trim() === "default") {
         try {
@@ -179,7 +199,6 @@ export async function notify(title: string, body: string): Promise<void> {
       }
     })
 
-    // 分离子进程，不阻塞主流程
     proc.unref()
   } catch {
     // Linux 系统通知失败不影响主流程

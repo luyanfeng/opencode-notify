@@ -48,14 +48,23 @@ export class CustomWebhookSender implements Sender {
       })
     }
 
-    const response = await fetch(url, {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        ...headers,
-      },
-      body: method === "POST" ? body : undefined,
-    })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 10_000)
+
+    let response: Response
+    try {
+      response = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          ...headers,
+        },
+        body: method === "POST" ? body : undefined,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
 
     if (!response.ok) {
       const text = await response.text().catch(() => "")

@@ -51,11 +51,20 @@ export class FeishuSender implements Sender {
       },
     })
 
-    const response = await fetch(webhook_url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 10_000)
+
+    let response: Response
+    try {
+      response = await fetch(webhook_url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
 
     if (!response.ok) {
       const text = await response.text().catch(() => "")
