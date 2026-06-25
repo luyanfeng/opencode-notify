@@ -426,7 +426,7 @@ const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "acti
   dedupe_seconds: 60,
   suppress_when_active: true,
   activity_timeout: 60,
-  suppress_events_when_active: ["permission_required", "input_required"],
+  suppress_events_when_active: ["permission_required"],
   session_stale_timeout_ms: 600_000,
   remote_delay_channels: [],
   remote_delay_seconds: 60,
