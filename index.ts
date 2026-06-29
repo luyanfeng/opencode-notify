@@ -117,6 +117,27 @@ const plugin: Plugin = async (_input, options) => {
             debug(`→ 用户活跃事件, 会话=${sessionID}`)
           }
 
+          // message.part.updated — 累积助手回复文本（防抖：只记录最后一段的文本片段）
+          if (type === "message.part.updated") {
+            const part = properties?.part
+            if (part?.type === "text" && !part.synthetic && part.text) {
+              tracker.appendAssistantText(sessionID, String(part.text))
+            }
+          }
+
+          // message.updated（role=user）— 用户新输入，冻结当前助手回复
+          if (type === "message.updated") {
+            const role = properties?.info?.role
+            if (role === "user") {
+              tracker.freezeAssistantSummary(sessionID)
+            }
+          }
+
+          // session.idle — 会话空闲时也冻结助手回复
+          if (type === "session.idle") {
+            tracker.freezeAssistantSummary(sessionID)
+          }
+
           // 会话生命周期事件
           if (type === "session.created") {
             const parentID = properties.info?.parentID

@@ -168,6 +168,34 @@ export class SessionTracker {
     }
   }
 
+  /** 累积助手回复文本片段（防抖 + 上限 200 字） */
+  appendAssistantText(sessionID: string, text: string): void {
+    if (sessionID === "unknown" || !text) return
+    const existing = this.sessions.get(sessionID)
+    if (existing) {
+      const cur = existing.assistantSummary ?? ""
+      if (cur.endsWith(text)) return
+      if (text.endsWith(cur)) { existing.assistantSummary = text; return }
+      existing.assistantSummary = (cur + text).slice(-200)
+    } else {
+      this.sessions.set(sessionID, {
+        sessionID,
+        lastActivity: Date.now(),
+        createdAt: Date.now(),
+        assistantSummary: text.slice(-200),
+      })
+    }
+  }
+
+  /** 用户新输入时冻结当前助手回复（截取最后一段非工具输出） */
+  freezeAssistantSummary(sessionID: string): void {
+    const existing = this.sessions.get(sessionID)
+    if (!existing?.assistantSummary) return
+    // 取最后 500 字作为摘要
+    const s = existing.assistantSummary
+    existing.assistantSummary = s.length > 500 ? "…" + s.slice(-500) : s
+  }
+
   /** 获取助手回复摘要 */
   getAssistantSummary(sessionID: string): string | undefined {
     return this.sessions.get(sessionID)?.assistantSummary
