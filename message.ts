@@ -108,7 +108,7 @@ export function enrich(msg: Message, sessionTopic?: string, userPrompt?: string,
 
   if (userPrompt) {
     msg.title = `[${shortTitle(userPrompt, 16)}] ${label}`
-    msg.body = msg.body.replace(/^(详情：.*)$/m, `详情：「$1」${shortTitle(userPrompt, 80)}`)
+    msg.body = msg.body.replace(/^详情：(.+)$/m, `详情：「$1」${shortTitle(userPrompt, 80)}`)
   }
 
   if (assistantSummary) {
