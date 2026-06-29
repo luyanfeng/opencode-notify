@@ -72,18 +72,25 @@ const plugin: Plugin = async (_input, options) => {
     return {
       /**
        * chat.message — 用户发送新消息时回调
-       * 从 parts 中提取 TextPart.text 作为用户输入内容
+       * 从 parts 中提取 TextPart.text
+       * - role=user：记录用户输入
+       * - role=assistant：记录助手回复摘要
        */
       "chat.message": async (_input, output) => {
         const { message, parts } = output
         const sessionID = message.sessionID
-        if (!sessionID || message.role !== "user") return
+        if (!sessionID) return
 
         const textParts = parts.filter(p => p.type === "text" && !p.synthetic)
-        const userText = textParts.map(p => (p as any).text ?? "").filter(Boolean).join("\n")
-        if (userText) {
-          debug(`→ chat.message: 会话=${sessionID}, 输入="${userText.slice(0, 200)}"`)
-          tracker.setUserPrompt(sessionID, userText.slice(0, 1000))
+        const text = textParts.map(p => (p as any).text ?? "").filter(Boolean).join("\n").trim()
+        if (!text) return
+
+        if (message.role === "user") {
+          debug(`→ chat.message: 会话=${sessionID}, 输入="${text.slice(0, 200)}"`)
+          tracker.setUserPrompt(sessionID, text.slice(0, 1000))
+        } else if (message.role === "assistant") {
+          debug(`→ chat.message: 会话=${sessionID}, 回复="${text.slice(0, 200)}"`)
+          tracker.setAssistantSummary(sessionID, text.slice(0, 1000))
         }
       },
 
@@ -177,10 +184,11 @@ const plugin: Plugin = async (_input, options) => {
             return  // 其他不关心的事件
           }
 
-          // 注入会话主题和用户输入，增强通知内容
+          // 注入会话主题、用户输入和助手摘要，增强通知内容
           const sessionTopic = tracker.getSessionTopic(sessionID)
           const userPrompt = tracker.getUserPrompt(sessionID)
-          enrich(msg, sessionTopic, userPrompt)
+          const assistantSummary = tracker.getAssistantSummary(sessionID)
+          enrich(msg, sessionTopic, userPrompt, assistantSummary)
 
           debug(`→ 匹配通知: ${msg.event} topic="${sessionTopic ?? ""}" prompt="${(userPrompt ?? "").slice(0, 80)}"`)
 

@@ -95,19 +95,24 @@ function shortTitle(title: string, maxLen = 20): string {
  * 增强通知消息：注入会话上下文
  *
  * - 标题：`[用户输入前16字] 事件标签`（有用户输入时替换 `opencode - 事件标签`）
- * - 正文：`用户输入` 追加到 `详情` 行末尾
+ * - 正文：`用户输入` 追加到 `详情` 行末尾，`助手回复` 追加在最后
  *
  * @param msg 原始通知消息
  * @param sessionTopic 会话主题（来自 session.updated）
  * @param userPrompt 用户输入内容（来自 chat.message hook）
+ * @param assistantSummary 助手回复摘要（来自 chat.message hook）
  * @returns 增强后的消息（原地修改并返回）
  */
-export function enrich(msg: Message, sessionTopic?: string, userPrompt?: string): Message {
+export function enrich(msg: Message, sessionTopic?: string, userPrompt?: string, assistantSummary?: string): Message {
   const label = EVENT_LABELS[msg.event] ?? msg.event
 
   if (userPrompt) {
     msg.title = `[${shortTitle(userPrompt, 16)}] ${label}`
     msg.body = msg.body.replace(/^(详情：.*)$/m, `详情：「$1」${shortTitle(userPrompt, 80)}`)
+  }
+
+  if (assistantSummary) {
+    msg.body += `\n输出：${shortTitle(assistantSummary, 200)}`
   }
 
   if (sessionTopic) {

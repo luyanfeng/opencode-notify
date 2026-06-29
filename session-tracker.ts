@@ -26,6 +26,8 @@ export interface SessionInfo {
   userPrompt?: string
   /** opencode 自动生成的会话主题（session.updated 时更新） */
   sessionTopic?: string
+  /** 助手最后一段回复摘要 */
+  assistantSummary?: string
   /** 会话状态：busy | idle | retry | deleted */
   status?: string
 }
@@ -148,6 +150,27 @@ export class SessionTracker {
   /** 获取会话主题 */
   getSessionTopic(sessionID: string): string | undefined {
     return this.sessions.get(sessionID)?.sessionTopic
+  }
+
+  /** 设置助手回复摘要 */
+  setAssistantSummary(sessionID: string, summary: string): void {
+    if (sessionID === "unknown" || !summary) return
+    const existing = this.sessions.get(sessionID)
+    if (existing) {
+      existing.assistantSummary = summary
+    } else {
+      this.sessions.set(sessionID, {
+        sessionID,
+        lastActivity: Date.now(),
+        createdAt: Date.now(),
+        assistantSummary: summary,
+      })
+    }
+  }
+
+  /** 获取助手回复摘要 */
+  getAssistantSummary(sessionID: string): string | undefined {
+    return this.sessions.get(sessionID)?.assistantSummary
   }
 
   /** 设置用户输入内容 */
