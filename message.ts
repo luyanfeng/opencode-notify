@@ -78,10 +78,10 @@ export function formatBody(msg: Message): string {
   const eventLabel = EVENT_LABELS[msg.event] ?? msg.event
 
   return [
-    `事件：${eventLabel}`,
+    `事件：「${defaultBody(msg.event)}」`,
     `会话：${shortSession(msg.sessionID)}`,
     `时间：${time}`,
-    `详情：${msg.body}`,
+    `输入：${msg.body}`,
   ].join("\n")
 }
 
@@ -108,7 +108,7 @@ export function enrich(msg: Message, sessionTopic?: string, userPrompt?: string,
 
   if (userPrompt) {
     msg.title = `[${shortTitle(userPrompt, 16)}] ${label}`
-    msg.body = msg.body.replace(/^详情：(.+)$/m, `详情：「$1」${shortTitle(userPrompt, 80)}`)
+    msg.body = msg.body.replace(/^输入：(.+)$/m, `输入：${shortTitle(userPrompt, 80)}`)
   }
 
   if (assistantSummary) {

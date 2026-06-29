@@ -209,6 +209,7 @@ const plugin: Plugin = async (_input, options) => {
           const sessionTopic = tracker.getSessionTopic(sessionID)
           const userPrompt = tracker.getUserPrompt(sessionID)
           const assistantSummary = tracker.getAssistantSummary(sessionID)
+          if (assistantSummary) info(`→ 通知输出摘要: "${assistantSummary.slice(0, 100)}"`)
           enrich(msg, sessionTopic, userPrompt, assistantSummary)
 
           debug(`→ 匹配通知: ${msg.event} topic="${sessionTopic ?? ""}" prompt="${(userPrompt ?? "").slice(0, 80)}"`)
