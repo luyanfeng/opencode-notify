@@ -179,22 +179,22 @@ export class DelayedDispatcher {
    *
    * @returns true=应取消，false=应继续发送
    */
-  private shouldCancel(sid: string): boolean {
+  private shouldCancel(sid: string, currentDelayMs: number): boolean {
     const occluded = isTerminalOccluded()
     // 用户在别的窗口/子屏 → 肯定没看本终端，继续发
     if (occluded === true) return false
 
     // 本终端可能可见 → 查系统空闲时间判断用户是否真在
     const idleMs = getSystemIdleMs()
-    if (idleMs !== null && idleMs < this.delayMs) {
-      info(`远程延迟: 用户已回到电脑前（空闲${Math.round(idleMs / 1000)}秒 < 延迟${this.delayMs / 1000}秒），取消会话=${sid} 的延迟推送`)
+    if (idleMs !== null && idleMs < currentDelayMs) {
+      info(`远程延迟: 用户已回到电脑前（空闲${Math.round(idleMs / 1000)}秒 < 延迟${currentDelayMs / 1000}秒），取消会话=${sid} 的延迟推送`)
       this.cancelForSession(sid)
       return true
     }
 
     // 空闲时间 >= 延迟窗口 或 无法检测 → 继续发
     if (idleMs !== null) {
-      debug(`远程延迟: 用户持续空闲(${Math.round(idleMs / 1000)}秒 >= ${this.delayMs / 1000}秒)，继续发送 会话=${sid}`)
+      debug(`远程延迟: 用户持续空闲(${Math.round(idleMs / 1000)}秒 >= ${currentDelayMs / 1000}秒)，继续发送 会话=${sid}`)
     } else {
       debug(`远程延迟: 无法检测系统空闲时间，继续发送 会话=${sid}`)
     }
@@ -217,7 +217,7 @@ export class DelayedDispatcher {
         entry.timeoutId = null
 
         // 判断用户是否在电脑前：窗口/子屏可见性 + 系统空闲时间
-        if (this.shouldCancel(sid)) return
+        if (this.shouldCancel(sid, currentDelay)) return
 
         // 在正文追加延迟标记（第几次 / 共几次 / 下次时间）
         const sendCount = entry.count + 1  // 1-based
