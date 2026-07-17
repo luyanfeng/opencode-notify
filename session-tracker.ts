@@ -168,7 +168,7 @@ export class SessionTracker {
     }
   }
 
-  /** 累积助手回复文本片段（防抖 + 上限 200 字） */
+  /** 累积助手回复文本片段（防抖 + 上限 500 字） */
   appendAssistantText(sessionID: string, text: string): void {
     if (sessionID === "unknown" || !text) return
     const existing = this.sessions.get(sessionID)
@@ -176,13 +176,13 @@ export class SessionTracker {
       const cur = existing.assistantSummary ?? ""
       if (cur.endsWith(text)) return
       if (text.endsWith(cur)) { existing.assistantSummary = text; return }
-      existing.assistantSummary = (cur + text).slice(-200)
+      existing.assistantSummary = (cur + text).slice(-500)
     } else {
       this.sessions.set(sessionID, {
         sessionID,
         lastActivity: Date.now(),
         createdAt: Date.now(),
-        assistantSummary: text.slice(-200),
+        assistantSummary: text.slice(-500),
       })
     }
   }

@@ -112,7 +112,7 @@ export function enrich(msg: Message, sessionTopic?: string, userPrompt?: string,
   }
 
   if (assistantSummary) {
-    msg.body += `\n输出：${shortTitle(assistantSummary, 200)}`
+    msg.body += `\n输出：${shortTitle(assistantSummary, 500)}`
   }
 
   if (sessionTopic) {
