@@ -146,7 +146,10 @@ const plugin: Plugin = async (_input, options) => {
           }
           if (type === "session.updated") {
             const topic = properties.info?.title
+            const parentID = properties.info?.parentID
             tracker.updateTopic(sessionID, topic)
+            // 兜底：若 session.created 未带 parentID，从 session.updated 补记父子关系
+            if (parentID) tracker.setParent(sessionID, parentID)
             debug(`→ 会话已更新, 会话=${sessionID}${topic ? ` topic="${topic}"` : ""}`)
           }
           if (type === "session.deleted") {
@@ -214,9 +217,8 @@ const plugin: Plugin = async (_input, options) => {
 
           debug(`→ 匹配通知: ${msg.event} topic="${sessionTopic ?? ""}" prompt="${(userPrompt ?? "").slice(0, 80)}"`)
 
-          // 子会话（background task）：非失败事件跳过，失败仍通知
-          // run_completed 已在上层排除子会话，此处的 isBackground 只对 route 事件生效
-          if (tracker.isBackground(sessionID) && msg.event !== "run_failed") {
+          // 子会话（background task）：只保留授权/提问通知，完成/取消/失败均静默
+          if (tracker.isBackground(sessionID) && msg.event !== "permission_required") {
             debug(`→ 子会话(background task) ${sessionID} 跳过通知 (${msg.event})`)
             return
           }

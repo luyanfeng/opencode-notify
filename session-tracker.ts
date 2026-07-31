@@ -108,6 +108,22 @@ export class SessionTracker {
     return info ? isBackgroundSession(info) : false
   }
 
+  /** 补记父子关系（兜底：session.created 未带 parentID 时从 session.updated 记录） */
+  setParent(sessionID: string, parentID: string): void {
+    if (sessionID === "unknown" || !parentID) return
+    const existing = this.sessions.get(sessionID)
+    if (existing) {
+      existing.parentID = parentID
+    } else {
+      this.sessions.set(sessionID, {
+        sessionID,
+        lastActivity: Date.now(),
+        createdAt: Date.now(),
+        parentID,
+      })
+    }
+  }
+
   /** 更新会话状态（来自 session.status / session.idle） */
   updateStatus(sessionID: string, status: string): void {
     if (sessionID === "unknown" || !status) return
