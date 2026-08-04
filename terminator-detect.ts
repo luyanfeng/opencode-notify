@@ -176,20 +176,30 @@ function shortId(uuid: string): string {
 // ─── 第一级：X 窗口检测 ──────────────────────────────────────────────────
 
 /**
- * 检测 Terminator 窗口是否是当前 X 活跃窗口
- * @returns true=Terminator 是活跃窗口, false=不是, null=检测失败
+ * 获取当前 X 活跃窗口的 WM_CLASS 字符串
+ * @returns WM_CLASS 字符串，或 null（检测失败）
  */
-function isTerminatorWindowActive(): boolean | null {
+function getActiveWindowClass(): string | null {
   try {
     const out = execSync(
       `xprop -root _NET_ACTIVE_WINDOW 2>/dev/null | awk '{print $NF}' | xargs -I{} xprop -id {} WM_CLASS 2>/dev/null`,
       { encoding: "utf-8", timeout: 5000 },
     ).trim()
-    return out.includes('"Terminator"')
+    return out || null
   } catch (e) {
-    debug(`xprop 检测 Terminator 窗口失败: ${e instanceof Error ? e.message : String(e)}`)
+    debug(`xprop 检测活跃窗口失败: ${e instanceof Error ? e.message : String(e)}`)
     return null
   }
+}
+
+/**
+ * 检测 Terminator 窗口是否是当前 X 活跃窗口
+ * @returns true=Terminator 是活跃窗口, false=不是, null=检测失败
+ */
+function isTerminatorWindowActive(): boolean | null {
+  const wmClass = getActiveWindowClass()
+  if (wmClass === null) return null
+  return wmClass.includes('"Terminator"')
 }
 
 // ─── 第二级：聚焦终端检测 ───────────────────────────────────────────────
@@ -226,4 +236,45 @@ function queryFocusedTerminal(): string | null {
   }
 
   return null
+}
+
+// ─── 激活状态检测（供延迟推送探针使用）────────────────────────────────
+
+/**
+ * 判断本进程是否运行在 Terminator 中
+ *
+ * 通过 TERMINATOR_UUID 环境变量判断（Terminator 在子屏中注入）。
+ * @returns true=Terminator, false=其他终端
+ */
+export function isTerminator(): boolean {
+  return !!MY_UUID
+}
+
+/**
+ * 获取当前"窗口激活状态"标识，用于探针检测激活状态变化
+ *
+ * 返回一个可比较的标识，探针只需对比"是否与上次相同"：
+ * - Terminator 环境：返回 isTerminalOccluded() 的结果
+ *   （true=被遮挡/用户在其他窗口或子屏, false=本子屏可见）
+ * - 非 Terminator：返回当前活跃窗口的终端类别
+ *   （"Terminator"/"gnome-terminal"/"konsole"/"other"/null）
+ *
+ * @returns 激活状态标识字符串（任意变化即视为"用户激活/切换了窗口"），或 null（无法检测）
+ */
+export function getWindowActivationState(): string | null {
+  if (isTerminator()) {
+    const occluded = isTerminalOccluded()
+    if (occluded === null) return null
+    return occluded ? "occluded" : "visible"
+  }
+
+  // 非 Terminator：只看窗口（不查子屏）
+  const wmClass = getActiveWindowClass()
+  if (wmClass === null) return null
+  // 从 WM_CLASS 提取终端类别（如 "gnome-terminal" / "konsole" / 其他）
+  const m = wmClass.match(/"([^"]+)"/)
+  const cls = m ? m[1].toLowerCase() : wmClass.toLowerCase()
+  // 终端类窗口视为"本终端激活"，非终端窗口统一为 "other"
+  const terminalLike = /terminal|term|konsole|xfce|alacritty|kitty|wezterm|foot/i.test(cls)
+  return terminalLike ? cls : "other"
 }

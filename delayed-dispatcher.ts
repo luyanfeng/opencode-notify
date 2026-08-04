@@ -1,7 +1,7 @@
 import type { Message } from "./message.js"
 import type { Sender } from "./senders/types.js"
 import { error, warn, info, debug } from "./log.js"
-import { isTerminalOccluded, getSystemIdleMs } from "./terminator-detect.js"
+import { isTerminalOccluded, getSystemIdleMs, getWindowActivationState } from "./terminator-detect.js"
 
 /**
  * 远程延迟通知调度器
@@ -29,6 +29,16 @@ export class DelayedDispatcher {
    * Map<sessionID, Map<channelName, PendingEntry>>
    */
   private pending: Map<string, Map<string, PendingEntry>> = new Map()
+
+  /**
+   * 激活状态探针（按会话）
+   * Map<sessionID, { intervalId, lastState }>
+   * 延迟期间每 5 秒探测窗口/子屏激活状态，状态变化 → 取消该会话延迟
+   */
+  private probes: Map<string, { intervalId: ReturnType<typeof setInterval>; lastState: string | null }> = new Map()
+
+  /** 探针探测间隔（毫秒） */
+  private static readonly PROBE_INTERVAL_MS = 5_000
 
   constructor(
     /** 延迟毫秒数 */
@@ -64,6 +74,66 @@ export class DelayedDispatcher {
       this.scheduleOne(sid, ch, msg)
       info(`远程延迟: 已调度 会话=${sid} 渠道=${ch} 延迟=${this.delayMs}ms`)
     }
+
+    // 会话首次调度延迟 → 启动激活状态探针（原逻辑之外的新增取消路径）
+    this.startProbe(sid)
+  }
+
+  /**
+   * 启动会话的激活状态探针
+   *
+   * 每 PROBE_INTERVAL_MS（5秒）探测一次窗口/子屏激活状态，
+   * 状态与上次不同（用户激活/切换了本会话所在终端窗口）→ 取消该会话所有延迟通知并停止探针。
+   *
+   * 探针跟随会话延迟任务整个生命周期，会话无待发延迟时自动停止。
+   */
+  private startProbe(sid: string): void {
+    if (this.probes.has(sid)) return  // 已有探针，复用
+
+    const initial = getWindowActivationState()
+    const probe = {
+      intervalId: setInterval(() => this.probeTick(sid), DelayedDispatcher.PROBE_INTERVAL_MS),
+      lastState: initial,
+    }
+    probe.intervalId.unref()
+    this.probes.set(sid, probe)
+    debug(`远程延迟: 激活探针启动 会话=${sid} 初始状态=${initial}`)
+  }
+
+  /**
+   * 探针单次探测
+   * 状态变化 → 取消会话所有延迟 + 停止探针
+   */
+  private probeTick(sid: string): void {
+    // 会话已无待发延迟 → 停止探针
+    if (!this.pending.has(sid) || this.pending.get(sid)!.size === 0) {
+      this.stopProbe(sid)
+      return
+    }
+
+    const probe = this.probes.get(sid)
+    if (!probe) return
+
+    const cur = getWindowActivationState()
+    if (cur === null) return  // 无法检测，跳过本轮（保留探针继续试）
+
+    if (probe.lastState !== null && cur !== probe.lastState) {
+      info(`远程延迟: 检测到窗口激活状态变化（${probe.lastState} → ${cur}），取消会话=${sid} 的延迟推送`)
+      this.cancelForSession(sid)
+      this.stopProbe(sid)
+      return
+    }
+
+    probe.lastState = cur
+  }
+
+  /** 停止会话的激活状态探针 */
+  private stopProbe(sid: string): void {
+    const probe = this.probes.get(sid)
+    if (!probe) return
+    clearInterval(probe.intervalId)
+    this.probes.delete(sid)
+    debug(`远程延迟: 激活探针停止 会话=${sid}`)
   }
 
   /**
@@ -101,12 +171,13 @@ export class DelayedDispatcher {
 
     if (remaining.length === 0) {
       this.pending.delete(sessionID)
+      this.stopProbe(sessionID)
       info(`远程延迟: 已取消 会话=${sessionID}`)
     } else {
-      // 仍有受保护条目，重建 map
+      // 仍有受保护条目，重建 map（不输出 info，避免误导；仅 debug 记录）
       const newMap = new Map(remaining)
       this.pending.set(sessionID, newMap)
-      info(`远程延迟: 部分取消 会话=${sessionID} (${remaining.length} 个条目受保护保留)`)
+      debug(`远程延迟: 部分取消（受保护保留） 会话=${sessionID} (${remaining.length} 个条目)`)
     }
   }
 
@@ -122,6 +193,10 @@ export class DelayedDispatcher {
    * 清理所有待发任务（插件卸载时调用）
    */
   destroy(): void {
+    // 停止所有探针
+    for (const sessionID of [...this.probes.keys()]) {
+      this.stopProbe(sessionID)
+    }
     for (const sessionID of this.pending.keys()) {
       this.cancelForSession(sessionID)
     }
@@ -243,11 +318,17 @@ export class DelayedDispatcher {
         entry.count++
         if (entry.count >= this.maxCount) {
           chMap.delete(ch)
-          if (chMap.size === 0) this.pending.delete(sid)
+          if (chMap.size === 0) {
+            this.pending.delete(sid)
+            this.stopProbe(sid)
+          }
           info(`远程延迟: 已完成 会话=${sid} 渠道=${ch} (推送${entry.count}次)`)
         } else if (entry.failCount >= 3) {
           chMap.delete(ch)
-          if (chMap.size === 0) this.pending.delete(sid)
+          if (chMap.size === 0) {
+            this.pending.delete(sid)
+            this.stopProbe(sid)
+          }
           error(`远程延迟: 连续失败${entry.failCount}次，放弃 会话=${sid} 渠道=${ch}`)
         } else {
           this.scheduleOne(sid, ch, msg)
