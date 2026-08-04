@@ -74,16 +74,16 @@ export class DelayedDispatcher {
   /**
    * 取消指定会话的用户活动触发的待发延迟通知
    *
-   * 保护规则：刚建立（< delayMs 的 1/4）的条目不取消，
+   * 保护规则：刚建立（< 2 秒）的条目不取消，
    * 防止 opencode 在任务完成后的内部事件（如 tui.command.execute）
-   * 竞态取消刚调度的延迟通知。
+   * 毫秒级竞态取消刚调度的延迟通知。
    */
   cancelForSession(sessionID: string): void {
     const chMap = this.pending.get(sessionID)
     if (!chMap) return
 
     const now = Date.now()
-    const protectMs = Math.max(5000, this.delayMs / 4)  // 至少 5 秒，最多 delayMs/4
+    const protectMs = 2000  // 仅防毫秒级竞态，用户真实操作不受保护
 
     const remaining: Array<[string, PendingEntry]> = []
     for (const [ch, entry] of chMap) {
@@ -170,34 +170,39 @@ export class DelayedDispatcher {
   /**
    * 判断是否应取消延迟推送（用户已回到电脑前）
    *
-   * 两层检测：
-   *   1. isTerminalOccluded() === true → 用户在别的应用/子屏 → 不取消（发）
-   *   2. 本屏可见（false/null）→ 查系统空闲时间：
-   *       空闲时间 < 延迟窗口 → 用户有近期输入，已回来 → 取消
-   *       空闲时间 >= 延迟窗口 → 用户一直闲置 → 不取消（发）
-   *       无法检测空闲时间 → 保守继续发
+   * 检测顺序：先查系统空闲时间（最可靠）：
+   *   1. 系统空闲时间短（用户有近期键盘/鼠标输入）→ 人在电脑前 → 取消
+   *      无论聚焦在哪个窗口/子屏都算，避免"用户在另一个子屏操作仍被推送"
+   *   2. 空闲时间 >= 延迟窗口 → 用户持续闲置 → 不取消（发）
+   *   3. 无法检测系统空闲时间 → 退回窗口可见性判断：
+   *       本屏可见 → 取消（用户在看本终端）
+   *       本屏被遮挡（用户在别的应用/子屏）→ 无法确认 → 保守继续发
    *
    * @returns true=应取消，false=应继续发送
    */
   private shouldCancel(sid: string, currentDelayMs: number): boolean {
-    const occluded = isTerminalOccluded()
-    // 用户在别的窗口/子屏 → 肯定没看本终端，继续发
-    if (occluded === true) return false
-
-    // 本终端可能可见 → 查系统空闲时间判断用户是否真在
+    // 优先：系统空闲时间 —— 用户有近期输入说明人在电脑前，取消推送
     const idleMs = getSystemIdleMs()
-    if (idleMs !== null && idleMs < currentDelayMs) {
-      info(`远程延迟: 用户已回到电脑前（空闲${Math.round(idleMs / 1000)}秒 < 延迟${currentDelayMs / 1000}秒），取消会话=${sid} 的延迟推送`)
+    if (idleMs !== null) {
+      if (idleMs < currentDelayMs) {
+        info(`远程延迟: 用户已回到电脑前（空闲${Math.round(idleMs / 1000)}秒 < 延迟${currentDelayMs / 1000}秒），取消会话=${sid} 的延迟推送`)
+        this.cancelForSession(sid)
+        return true
+      }
+      debug(`远程延迟: 用户持续空闲(${Math.round(idleMs / 1000)}秒 >= ${currentDelayMs / 1000}秒)，继续发送 会话=${sid}`)
+      return false
+    }
+
+    // 兜底：无法检测空闲时间 → 用窗口可见性判断
+    const occluded = isTerminalOccluded()
+    // 本终端可见（当前窗口聚焦本屏或非 Terminator）→ 用户在看本终端 → 取消
+    if (occluded === false) {
+      info(`远程延迟: 本终端可见，用户在看本终端，取消会话=${sid} 的延迟推送`)
       this.cancelForSession(sid)
       return true
     }
-
-    // 空闲时间 >= 延迟窗口 或 无法检测 → 继续发
-    if (idleMs !== null) {
-      debug(`远程延迟: 用户持续空闲(${Math.round(idleMs / 1000)}秒 >= ${currentDelayMs / 1000}秒)，继续发送 会话=${sid}`)
-    } else {
-      debug(`远程延迟: 无法检测系统空闲时间，继续发送 会话=${sid}`)
-    }
+    // 被遮挡或检测失败 → 无法确认用户在不在 → 保守继续发
+    debug(`远程延迟: 无法确认用户位置(occluded=${occluded})，继续发送 会话=${sid}`)
     return false
   }
 

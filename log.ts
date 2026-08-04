@@ -55,9 +55,11 @@ function writeLog(level: LogLevel, msg: string): void {
   if (LEVEL_PRIORITY[level] > LEVEL_PRIORITY[state.level]) return
   try {
     ensureDir()
+    const now = new Date()
+    const ts = now.toLocaleString("zh-CN", { hour12: false }) + "." + String(now.getMilliseconds()).padStart(3, "0")
     writeFileSync(
       state.file,
-      `[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}\n`,
+      `[${ts}] [${level.toUpperCase()}] ${msg}\n`,
       { flag: "a" },
     )
   } catch {
