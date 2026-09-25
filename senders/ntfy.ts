@@ -70,6 +70,60 @@ function cellsPlausible(cells: string[]): boolean {
   return cells.length >= 2 && cells.every((c) => c.length <= 200)
 }
 
+/** 表格转等宽的总宽度阈值（显示宽度）：超过则降级为逐行键值对。
+ *  手机通知单行约 40 半角宽；超宽表格硬挤一横行会在空格处折行、对齐尽失，
+ *  而 ntfy Android 通知/详情页均不支持横向滚动（源码+框架查证），故竖排降级。
+ *  另：记录数 > MAX_ROWS 的多行表也走竖排（L 编号比长竖条数据易读）。 */
+const TABLE_MAX_WIDTH = 40
+const TABLE_MAX_ROWS = 3
+
+/**
+ * 将一个已解析的表格块渲染为文本。
+ * 总宽 ≤ TABLE_MAX_WIDTH 且记录数 ≤ TABLE_MAX_ROWS → 等宽对齐横排；
+ * 否则降级为"逐行键值对"竖排（L 编号，永不折行错位）。
+ */
+function renderTable(rows: string[][], widths: number[]): string[] {
+  const totalWidth = widths.reduce((a, b) => a + b, 0) + (widths.length - 1) * 2
+  // 横排仅适用于"窄且扁"的简单表：2 列、行少、总宽不超手机单行；
+  // ≥3 列（信息密度高）或多行记录 → 竖排 L 编号更易读（也永不折行错位）
+  const useHorizontal = totalWidth <= TABLE_MAX_WIDTH && widths.length === 2 && rows.length - 1 <= TABLE_MAX_ROWS
+  const out: string[] = []
+  if (useHorizontal) {
+    // 横排等宽对齐
+    for (const cells of rows) {
+      out.push(
+        cells
+          .map((c, idx) => padEnd(truncateToWidth(c, widths[idx]), widths[idx]))
+          .join("  ")
+          .trimEnd(),
+      )
+    }
+    return out
+  }
+  // 竖排降级：首行为表头（字段名），其余每行一条记录，行号 L1/L2/… 编号
+  const [header, ...records] = rows
+  const labelWidth = String(records.length).length
+  out.push(`▼ ${records.length} 条记录`)
+  records.forEach((rec, rIdx) => {
+    const label = `L${String(rIdx + 1).padStart(labelWidth, " ")}`
+    const fields = header
+      .map((h, idx) => ({ name: h.trim(), value: (rec[idx] ?? "").trim() }))
+      .filter((f) => f.value !== "")
+    if (fields.length === 0) return
+    const first = fields.shift()!
+    out.push(`${label} ${first.name}：${first.value}`)
+    for (const f of fields) out.push(`    ${f.name}：${f.value}`)
+  })
+  return out
+}
+
+/** 按显示宽度截断（从尾部丢字符） */
+function truncateToWidth(s: string, maxWidth: number): string {
+  let cell = s
+  while (displayWidth(cell) > maxWidth) cell = cell.slice(0, -1)
+  return cell
+}
+
 /**
  * 将文本中的 Markdown 表格块转换为等宽对齐的文本表格。
  * 非表格行原样保留；连续表格行视为一个表格块（分隔行剔除）。
@@ -88,27 +142,13 @@ export function tablesToMonospace(text: string): string {
       }
       const rows = block.filter((l) => !isSeparatorRow(l)).map(parseCells).filter(cellsPlausible)
       if (rows.length >= 2) {
-        // 计算每列最大显示宽度
+        // 计算每列最大显示宽度（单列限宽防撑爆）
         const colCount = Math.max(...rows.map((r) => r.length))
         const widths: number[] = []
         for (let c = 0; c < colCount; c++) {
-          widths[c] = Math.max(...rows.map((r) => displayWidth(r[c] ?? "")))
+          widths[c] = Math.min(Math.max(...rows.map((r) => displayWidth(r[c] ?? ""))), 28)
         }
-        // 每列限宽（防超长单元格撑爆通知），超出截断
-        const maxColWidth = 28
-        for (let c = 0; c < colCount; c++) widths[c] = Math.min(widths[c], maxColWidth)
-        for (const cells of rows) {
-          const line = cells
-            .slice(0, colCount)
-            .map((c, idx) => {
-              // 超宽截断（按显示宽度）
-              let cell = c
-              while (displayWidth(cell) > widths[idx]) cell = cell.slice(0, -1)
-              return padEnd(cell, widths[idx])
-            })
-            .join("  ")
-          out.push(line.trimEnd())
-        }
+        out.push(...renderTable(rows, widths))
       } else {
         // 不是合法表格（如单个含 | 的长行），原样
         out.push(...block)
