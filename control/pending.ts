@@ -43,8 +43,17 @@ export class PendingRegistry {
     }
     if (this.max === 0) return base
 
-    // 同一 requestID 去重（opencode 可能重复发 asked 事件）
-    this.removeByRequestID(requestID)
+    // 幂等：同一 requestID 已存在 → **复用既有令牌**（仅刷新标题/选项）。
+    // opencode 会对同一事件连发多次（实测同一秒双发 run_completed）：若每次都
+    // 轮换令牌，首条通知里发给用户的令牌会立刻失效——真机已暴露此 bug
+    // （手机拿着令牌 A 回复，注册表已被第 2 次事件轮换成令牌 B → 查无此证）。
+    const existing = this.items.find((i) => i.requestID === requestID)
+    if (existing) {
+      existing.title = base.title
+      existing.options = base.options
+      existing.createdAt = Date.now() // 重置 TTL（与"重复事件=仍在等待"语义一致）
+      return existing
+    }
 
     const used = new Set(this.items.map((i) => i.code))
     let code = genItemToken(this.instance)
