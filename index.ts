@@ -113,10 +113,9 @@ const plugin: Plugin = async (_input, options) => {
         if (message.role === "user") {
           debug(`→ chat.message: 会话=${sessionID}, 输入="${text.slice(0, 200)}"`)
           tracker.setUserPrompt(sessionID, text.slice(0, 1000))
-        } else if (message.role === "assistant") {
-          debug(`→ chat.message: 会话=${sessionID}, 回复="${text.slice(0, 200)}"`)
-          tracker.setAssistantSummary(sessionID, text.slice(0, 1000))
         }
+        // 助手回复不在此采集：通知"输出"统一走 message.part.updated 的按消息分桶
+        // （getAssistantText），流式过程中实时累积、保留尾部、且天然排除 reasoning part。
       },
 
       // event 总线 — 所有事件通过此钩子
@@ -148,11 +147,11 @@ const plugin: Plugin = async (_input, options) => {
             if (reqID) control?.resolvePending(reqID)
           }
 
-          // message.part.updated — 累积助手回复文本（防抖：只记录最后一段的文本片段）
+          // message.part.updated — 按消息分桶累积助手回复文本（保留尾部；reasoning part 不采集）
           if (type === "message.part.updated") {
             const part = properties?.part
-            if (part?.type === "text" && !part.synthetic && part.text) {
-              tracker.appendAssistantText(sessionID, String(part.text))
+            if (part?.type === "text" && !part.synthetic && part.text && part.messageID) {
+              tracker.appendAssistantText(sessionID, String(part.messageID), String(part.text))
             }
           }
 
@@ -240,10 +239,10 @@ const plugin: Plugin = async (_input, options) => {
             return  // 其他不关心的事件
           }
 
-          // 注入会话主题、用户输入和助手摘要，增强通知内容
+          // 注入会话主题、用户输入和助手回复（分桶累积的最后一条消息完整尾部）
           const sessionTopic = tracker.getSessionTopic(sessionID)
           const userPrompt = tracker.getUserPrompt(sessionID)
-          const assistantSummary = tracker.getAssistantSummary(sessionID)
+          const assistantSummary = tracker.getAssistantText(sessionID)
           if (assistantSummary) info(`→ 通知输出摘要: "${assistantSummary.slice(0, 100)}"`)
           enrich(msg, sessionTopic, userPrompt, assistantSummary)
 

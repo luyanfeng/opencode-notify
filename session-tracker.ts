@@ -28,8 +28,41 @@ export interface SessionInfo {
   sessionTopic?: string
   /** 助手最后一段回复摘要 */
   assistantSummary?: string
+  /** 当前助手消息的分桶累积（key=messageID），用于通知"输出"字段 */
+  assistantBucket?: AssistantBucket
   /** 会话状态：busy | idle | retry | deleted */
   status?: string
+}
+
+/**
+ * 助手回复的分桶累积
+ *
+ * 按 messageID 分桶：只累积**当前这条助手消息**的完整文本（流式 part 逐段追加），
+ * 新 messageID 出现即换桶——避免多条消息混进一个滚动窗导致"输出"从随机断点开始。
+ * 思考内容是独立的 reasoning part（`type: "reasoning"`），本桶只收 text part，天然不含思考。
+ */
+export interface AssistantBucket {
+  messageID: string
+  /** 累积文本（超上限从头部丢弃，保留尾部） */
+  text: string
+  /** 是否被截断过（用于展示提示） */
+  truncated: boolean
+}
+
+/** 分桶累积上限（**UTF-8 字节**，保留尾部）。ntfy 服务端消息硬限 4095 字节（实测 4096 报 500），
+ *  预留 ~1KB 给 title/tags/提示行等开销；中文 3 字节/字 → 约 1024 个中文字。 */
+const BUCKET_MAX_BYTES = 3072
+
+/** 按 UTF-8 字节截断保留尾部（超限丢弃头部），返回 {text, truncated} */
+function tailByBytes(text: string, maxBytes: number): { text: string; truncated: boolean } {
+  const total = Buffer.byteLength(text, "utf8")
+  if (total <= maxBytes) return { text, truncated: false }
+  // 从头部逐字符丢弃直到字节数达标（Buffer.from 整串代价可接受：桶最大 3KB+一个 part）
+  let s = text
+  while (Buffer.byteLength(s, "utf8") > maxBytes) {
+    s = s.slice(1)
+  }
+  return { text: s, truncated: true }
 }
 
 export function isBackgroundSession(info: SessionInfo): boolean {
@@ -184,23 +217,36 @@ export class SessionTracker {
     }
   }
 
-  /** 累积助手回复文本片段（防抖 + 上限 500 字） */
-  appendAssistantText(sessionID: string, text: string): void {
-    if (sessionID === "unknown" || !text) return
+  /**
+   * 累积助手回复文本（按 messageID 分桶，保留尾部）
+   *
+   * 流式 part 逐段到达：同 messageID → 追加；新 messageID → 换桶（旧的丢弃）。
+   * 超过桶字节上限从头部丢弃（truncated 标记），保证通知取到的是
+   * "最后一条回复"的连续尾部，而非多条消息拼接的随机断点。
+   */
+  appendAssistantText(sessionID: string, messageID: string, text: string): void {
+    if (sessionID === "unknown" || !messageID || !text) return
     const existing = this.sessions.get(sessionID)
-    if (existing) {
-      const cur = existing.assistantSummary ?? ""
-      if (cur.endsWith(text)) return
-      if (text.endsWith(cur)) { existing.assistantSummary = text; return }
-      existing.assistantSummary = (cur + text).slice(-500)
-    } else {
-      this.sessions.set(sessionID, {
-        sessionID,
-        lastActivity: Date.now(),
-        createdAt: Date.now(),
-        assistantSummary: text.slice(-500),
-      })
+    if (!existing) return
+    let bucket = existing.assistantBucket
+    if (!bucket || bucket.messageID !== messageID) {
+      bucket = { messageID, text: "", truncated: false }
+      existing.assistantBucket = bucket
     }
+    let merged = bucket.text + text
+    const t = tailByBytes(merged, BUCKET_MAX_BYTES)
+    bucket.text = t.text
+    if (t.truncated) bucket.truncated = true
+  }
+
+  /** 获取当前助手消息的累积文本（尾部，截断过则加省略前缀；前缀计入字节预算） */
+  getAssistantText(sessionID: string): string | undefined {
+    const bucket = this.sessions.get(sessionID)?.assistantBucket
+    if (!bucket?.text) return undefined
+    if (!bucket.truncated) return bucket.text
+    // 前缀替换尾部 3 字节（"…"占 3 字节），保证整体不超桶上限
+    const body = tailByBytes(bucket.text, BUCKET_MAX_BYTES - Buffer.byteLength("…", "utf8")).text
+    return "…" + body
   }
 
   /** 用户新输入时冻结当前助手回复（截取最后一段非工具输出） */
