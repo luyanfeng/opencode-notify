@@ -173,6 +173,54 @@ remote_delay_max_count: 3
 
 ---
 
+## 远程控制（手机 → 插件 → opencode）
+
+让手机通过 **Gotify** 或 **ntfy** 远程批准/拒绝权限、回答提问、追加指令或中断任务。插件只做出站连接、**不监听任何端口**，适合公司电脑等无公网入口的场景。ntfy 默认使用**长连接订阅**（实时推送、请求极少），可用 `reply.transport: poll` 退回短轮询。
+
+**用 ntfy 时推荐合并单话题**：手机只订阅一个话题，通知与回复同源。插件发布的通知都带 `tags:[bot_tag]`，订阅端过滤自身消息防回环。权限/提问通知底部渲染**操作按钮**（http 点按即执行；`[复制]` 把命令模板写剪贴板）。
+
+命令（**必须携带通知里的一次性令牌**；无令牌的回复会被静默忽略）：
+
+| 命令 | 作用 |
+|------|------|
+| `approve <令牌>` / `deny <令牌>` / `always <令牌>` | 允许一次 / 拒绝 / 始终允许（权限） |
+| `answer <令牌> <文本>` | 回答提问 |
+| `select <令牌> <数字>` | 选该提问第 n 个选项（同义: option/选择/选项） |
+| `say <令牌> <文本>` | 向会话追加指令（续接令牌 TTL 内可反复用） |
+| `stop <令牌>` | 中断该会话 |
+| `status <令牌>` / `help` | 查看待处理 / 帮助 |
+
+**防重复**：通知里的令牌是**一次性**的（用后即废、默认 30 分钟过期），重复发送不受理；
+多开 opencode / 多台电脑共用话题时，令牌含实例前缀，**只有发通知的实例受理**——
+无令牌或异主令牌一律静默忽略，不会串答或重复执行。
+
+**防重复**：通知里的令牌是**一次性**的（用后即废、默认 30 分钟过期），重复点按/重发不会二次执行；多开 opencode 时，只有发通知的进程会执行该令牌命令。
+
+```yaml
+channels:
+  ntfy:
+    mode: all                           # ntfy（支持按钮）| gotify
+    server_url: "https://ntfy.example.com"
+    token: "tk_xxxxxxxx"                # 通知与回复共用
+    topic: "opencode"                   # 单话题：通知 + 命令/回复
+    reply:                              # 回复能力（不配=纯单向通知）
+      enabled: true
+      # command_topic: "opencode-cmd"   # 省略=合并进 topic（推荐）；填写=分两个话题
+      transport: "stream"               # stream（长连接，默认）| poll（短轮询）
+      bot_tag: "opencode"               # 插件消息标记（合并模式防回环）
+      copy_button: true                 # 提问/完成类附 [复制] 命令模板（仅合并模式）
+      receipt_priority: 2               # 回执优先级（发往 topic，低于通知）
+      secret: "my-shared-secret"        # 手动命令用；按钮回调免
+```
+
+Gotify 用法（无按钮，仅文本命令；读命令用 client token `C...`、发回执用 application token `A...`）与 ntfy 完整选项见 `opencode-notify.yaml.example`。
+
+> ⚠️ **安全**：此通道可批准任意工具（含 shell）在电脑执行，等于远程操作电脑。务必设置 `secret` 或使用受保护话题，且不要把 token/secret 提交到仓库。
+
+> **平台说明**：通知内按钮仅 **ntfy** 支持（Gotify 无此能力）。ntfy Android 体验完整；iOS 的通知按钮默认不在锁屏/通知中心显示（需点开 App），且 `clear` 行为有已知问题——但一次性令牌的防重复在服务端侧始终有效。
+
+---
+
 ## 配置参考
 
 ### 配置文件位置

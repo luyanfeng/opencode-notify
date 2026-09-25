@@ -276,39 +276,176 @@ events:
 
 ---
 
-## 完整的典型配置
+## 10. 远程控制（手机 → 插件 → opencode 应答）
+
+### 解决的问题
+
+通知只解决了"告诉你发生了什么"，但权限请求和提问仍然需要你**回到电脑前**才能应答。人不在电脑前时任务就卡住了。
+
+远程控制让手机变成遥控器：**用 ntfy 时，权限/提问通知底部直接带操作按钮，点一下就处理完，无需手动发消息**；也可以用 Gotify 手动发命令。插件只做出站连接（ntfy 默认长连接订阅），**不监听任何端口**，因此适合公司电脑等无公网入口的环境。
+
+### 工作方式
+
+默认**合并单话题**（手机只订阅一个话题）：通知、命令、回执都在同一话题往来，靠 `bot_tag` 区分"插件发的"与"人发的"防回环。
+
+```
+① 权限发生 → 插件 POST ntfy /<topic>   tags=[opencode]
+              body: 操作「bash」需要授权 + 令牌
+              Actions: [允许] [始终允许] [拒绝]
+                    ↓
+② 手机收到带按钮的通知 → 点「允许」
+                    ↓  手机 App 发起 http 动作（无 tag）
+③ POST ntfy /<topic>  body="approve oc-1a2b-3c4d5e"
+                    ↓
+④ 插件订阅 GET /<topic>/json[?since=...]（长连接流，默认）
+   → 自身消息(tags含opencode)忽略；无tag命令 → 调 opencode 本地 API
+                    ↓
+⑤ 插件 POST ntfy /<topic>  tags=[opencode] → 手机看到"已允许 oc-1a2b-3c4d5e"（低优先级）
+```
+
+- **回环防护**：插件发布的通知/回执都带 `tags:[bot_tag]`，订阅端在解析命令**之前**过滤掉，避免把自己的消息读成命令。
+- **命令读取传输（`reply.transport`）**：
+
+| 值 | 行为 | 适用 |
+|----|------|------|
+| `stream`（默认） | 长连接订阅 `GET .../json`，服务端实时推送（keepalive 45s）；断线自动重连并带 `since=<最后消息id>` 补漏 | 绝大多数场景；请求极少、响应实时 |
+| `poll` | 短轮询 `GET .../json?poll=1&since=...`，每 `poll_interval_ms` 一次 | 服务端/中间层不允许长连接的兼容/兜底 |
+
+两种传输都只处理 `event=message`，游标均只按真实消息 id 推进（`open`/`keepalive` 不计入游标，避免整段缓存重放）；`stream` 内置看门狗（默认 120s 无任何流数据即重连）与消息去重，`since` 失效（HTTP 400）时自动重置游标重连。
+
+> 兼容：填写 `reply.command_topic` 即为**分离双话题**模式（通知话题 ≠ 命令话题），行为与旧版一致。
+
+### 命令协议（凭证强制）
+
+**所有回复必须携带通知里的一次性令牌 `oc-<实例>-<随机6位>`**。令牌是唯一的发送凭证：
+多实例/多机共用一个话题时，只有持有该令牌的实例受理；无令牌/令牌无效/令牌异主/令牌过期
+→ **完全静默忽略**（不执行、不回执），杜绝重复执行与串答。
+
+| 命令 | 作用 | 目标 |
+|------|------|------|
+| `approve <令牌>` | 允许一次 | 权限请求 |
+| `always <令牌>` | 始终允许 | 权限请求 |
+| `deny <令牌>` | 拒绝 | 权限请求 |
+| `answer <令牌> <文本>` | 回答提问 | 该提问 |
+| `select <令牌> <数字>` | 选该提问第 n 个选项（同义: option/选择/选项；无动词的 `<令牌> <数字>` 简写已废除） | 该提问 |
+| `say <令牌> <文本>` | 向会话追加指令（续接令牌 TTL 内可反复用） | 该会话 |
+| `stop <令牌>` | 中断该会话 | 该会话 |
+| `status <令牌>` | 查看待处理列表（验证不消费） | — |
+| `help` | 显示帮助 | — |
+
+**凭证规则**：
+- **一次性**：approve/deny/always/answer/choose 的令牌用后即废；重复发送不受理。
+- **可复用**：完成类通知的续接令牌在 TTL（默认 30 分钟）内可反复 `say`/`stop`；过期作废。
+- **静默失败**：无令牌 / 令牌无效 / 令牌异主（其它实例或电脑）→ 一律静默，仅插件日志留痕。
+- 会话码 `sc-xxxx` 已退役为**纯展示**（帮你区分是哪个会话的通知），不再作为回复凭证。
+
+**通知按钮**（ntfy 每条最多 3 个动作，服务端硬限）：
+
+| 通知类型 | 按钮 |
+|---|---|
+| 权限请求 | [允许] [始终允许] [拒绝]（http，携带令牌） |
+| 提问 ≤2 选项 | [选项1] [选项2] [复制] |
+| 提问 ≥3 选项 | [复制]（正文列 `1. … 2. …`，回复 `<令牌> <数字>`） |
+| 提问 无选项 | [复制] |
+| 完成/失败/取消 | [复制续接命令] [状态] |
+
+- `[复制]`（copy 动作）：把**带令牌的**命令模板写入剪贴板（如 `say oc-7343-94a531 `，**带尾空格**），粘贴后补写内容发送。
+- 通知正文尾部自动附「📱 回复: …」提示行；点**通知条本身**进入话题页可直接打字。
+
+**同义写法**（不区分大小写，前导 `/` 可有可无）：
+
+| 命令 | 同义词 |
+|------|--------|
+| approve | `a` `y` `yes` `ok` `同意` `批准` `允许` |
+| always | `始终` |
+| deny | `d` `n` `no` `reject` `拒绝` `否` `驳回` |
+| answer | `reply` `回答` `回复` |
+| say | `msg` `send` `指令` `追加` |
+| stop | `abort` `cancel` `中断` `停止` |
+| status | `状态` |
+| help | `帮助` |
+
+### 凭证与展示
+
+| 名称 | 形式 | 用途 |
+|------|------|------|
+| **一次性令牌** | `oc-<实例>-<随机6位>`，如 `oc-1a2b-3c4d5e` | **唯一回复凭证**：权限/提问用后即废；续接令牌 TTL 内可复用 |
+| 会话码（展示用） | `sc-xxxx`，如 `sc-ab12` | 仅在通知里展示，帮用户区分会话；**不再作为回复凭证** |
+| 序号 | `#2` | （保留展示）待处理列表第 2 条 |
+
+### 防重复处理（一次性令牌）
+
+ntfy 本身**没有**"按钮只能点一次"的机制（`clear=true` 只是成功后移除通知，iOS 上还有已知问题）。因此防重复由插件侧强制：
+
+1. **令牌一次性**：`consume` 语义——成功处理即从注册表移除，第二次点按/重发找不到目标，不会重复执行。
+2. **TTL 过期**：默认 30 分钟（`tokenTtlMs`），过期令牌自动失效。
+3. **多进程隔离**：令牌含**本进程实例前缀**，只有发通知的进程会执行；其它 opencode 进程读到后静默忽略。
+4. **权限/提问 API 自身幂等**：已应答的请求再应答不重复生效。
+5. **歧义拒绝**：不带令牌且存在多个同类待处理时→拒绝执行并提示用按钮（绝不任意挑一条）。
+6. **按钮 `clear=true`**：请求成功后移除通知，减少误再点。
+
+### 安全校验
+
+两种放行方式（fail-closed）：
+
+- **令牌回调**（按钮点按）：仅当**动作属于 approve/always/deny/answer** 且**令牌位于 ref 位**时才免 secret——防止把令牌形状的字符串塞进自由文本绕过校验。
+- **手动命令**：正文第一个词必须是 `secret`，否则整条忽略。
+
+> 注意：`say` / `stop` 不是按钮动作，即使 ref 位是令牌也仍需 secret。
+
+```text
+# 示例（secret = my-shared-secret）
+my-shared-secret approve
+my-shared-secret say sc-ab12 继续跑测试
+approve oc-1a2b-3c4d5e        # 按钮形态，免 secret
+```
+
+### 配置
+
+回复能力挂在**通知渠道**下（`channels.ntfy.reply` / `channels.gotify.reply`），与通知共用 `server_url` / `token`，没有单独的顶层配置块。
 
 ```yaml
-# 本地桌面弹通知
-system_message:
-  enabled: true
+channels:
+  ntfy:                            # ntfy（支持通知按钮）
+    mode: all
+    server_url: "https://ntfy.example.com"
+    token: "tk_xxxxxxxx"           # 通知与回复共用
+    topic: "opencode"              # 单话题：通知 + 命令/回复
+    reply:
+      enabled: true
+      # command_topic: "opencode-cmd"  # 省略=合并进 topic（推荐）；填写=分两个话题
+      transport: "stream"          # 命令读取方式：stream（长连接，默认）| poll（短轮询）
+      bot_tag: "opencode"          # 插件消息标记（合并模式防回环；非 emoji tag 弹窗不显示）
+      buttons: true                # 通知附带操作按钮（http）
+      button_always: true          # 权限按钮含"始终允许"
+      copy_button: true            # 提问/完成类附 [复制] 命令模板（仅合并模式）
+      poll_interval_ms: 3000       # 仅 transport=poll 时生效
+      token_ttl_ms: 1800000        # 一次性令牌有效期（默认 30 分钟）
+      max_pending: 30              # 记录最近多少条（0 = 不生成令牌）
+      publish_receipt: true        # 执行后发布回执（发往 topic）
+      receipt_priority: 2          # 回执优先级（1-5，低于通知）
+      command_priority: 3          # 按钮命令优先级（1-5，可选）
+      secret: "my-shared-secret"   # 手动命令用；按钮回调免
 
-# 屏幕跑马灯视觉提醒
-screen_flash:
-  enabled: true
-  duration: 3.0
-  speed: 4.0
-  intensity: 0.9
-
-# 远程推送到手机
-wechat_work:
-  enabled: true
-  webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
-
-# 只订阅关心的事件
-events:
-  - permission_required
-  - run_completed
-  - run_failed
-  - run_cancelled
-
-# 重要事件延迟补偿推送到微信
-remote_delay_channels:
-  - wechat_work
-remote_delay_seconds: 60
-remote_delay_max_count: 3
-
-# 日志日常 info，出问题时切 debug
-log:
-  level: info
+  gotify:                          # Gotify（无按钮，仅文本命令）
+    mode: delay_only
+    server_url: "https://gotify.example.com"
+    app_token: "Axxxxxxxx"         # 发通知/回执
+    reply:
+      enabled: true
+      client_token: "Cxxxxxxxx"    # 读命令（C 开头）
+      app_id: 3                    # 命令所在 application 的数字 id
+      secret: "my-shared-secret"
 ```
+
+**Gotify 说明**：通知用 `app_token`（A 开头），回复读取必须用 `client_token`（C 开头）——application token 只能发送。Gotify 官方 App 只能接收、不能发送，手机发命令需借助 HTTP Shortcuts / Tasker 等工具。**Gotify 无通知按钮**（只有 `click.url` 打开链接），一键审批仅 ntfy 支持。
+
+**ntfy 话题模式**：
+- **合并单话题（推荐）**：省略 `reply.command_topic` → 命令话题 = 通知话题。手机只订阅一个话题；插件发布的通知/回执都带 `tags:[bot_tag]`，订阅端过滤自身消息防回环。
+- **分离双话题（兼容旧配置）**：填写 `reply.command_topic`（且 ≠ topic）→ 通知与命令分开；此时不启用 `[复制]` 按钮（`copy_button` 仅合并模式生效），提问按钮退回"最多 3 个选项"旧行为。
+- 显式把 `command_topic` 填成与 `topic` 相同 → 自动按合并模式处理。
+- 合并模式必须保证 `bot_tag` 与用户消息的 tag 不同（用户消息通常无 tag，天然区分）。
+
+> **多实例/多机安全**：凭证强制协议下，令牌含实例前缀——其它实例/电脑收到的命令
+因"查无此证"被静默忽略，**不会**串答或重复注入。无令牌的消息一律静默。
+（这正是取消"裸数字/裸 say"便捷语法换来的安全性；便捷性由 [复制] 按钮兜底。）

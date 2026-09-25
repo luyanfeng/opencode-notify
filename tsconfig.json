@@ -11,5 +11,5 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["index.ts", "*.ts", "senders/**/*.ts"]
+  "include": ["index.ts", "*.ts", "senders/**/*.ts", "control/**/*.ts", "scripts/**/*.ts"]
 }

@@ -39,7 +39,9 @@ export class Dispatcher {
     }
 
     const now = Date.now()
-    const key = this.store.buildKey(msg.agent, msg.event, msg.sessionID)
+    // 权限/提问类通知用含 requestID 的独立去重 key（每条请求都必须送达）；
+    // 其余事件沿用 agent:event:sessionID（防重复骚扰）。
+    const key = msg.dedupeKey ?? this.store.buildKey(msg.agent, msg.event, msg.sessionID)
 
     // 去重检查 + 预留发送时隙
     const allowed = this.store.reserveSend(key, this.windowSec, now)

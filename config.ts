@@ -45,13 +45,69 @@ export interface CustomWebhookChannelConfig extends ChannelConfig {
   template?: string
 }
 
+/**
+ * 自定义 Webhook 渠道配置
+ * - 单一对象（旧写法）：`custom_webhook: { mode, url, ... }`
+ * - 命名映射（新写法）：`custom_webhook: { my_slack: { mode, url, ... }, ... }`
+ * 通过顶层 `mode` 是否为字符串判定两种形式。
+ */
+export type CustomWebhookConfig =
+  | CustomWebhookChannelConfig
+  | Record<string, CustomWebhookChannelConfig>
+
+/** ntfy 通知渠道（可选附带 reply 回复能力） */
+export interface NtfyChannelConfig extends ChannelConfig {
+  server_url?: string
+  /** 受保护话题的 Bearer token（通知与回复共用） */
+  token?: string
+  /** 插件→手机 通知话题 */
+  topic?: string
+  /** 通知优先级（默认：权限=5，其余=3） */
+  priority?: number
+  /** 回复（入站命令）能力；不配则纯单向通知 */
+  reply?: ReplyConfigInput
+}
+
+/** Gotify 通知渠道（可选附带 reply 回复能力；无按钮，仅文本命令） */
+export interface GotifyChannelConfig extends ChannelConfig {
+  server_url?: string
+  /** A 开头 application token：发通知与回执 */
+  app_token?: string
+  /** 通知优先级（默认 5） */
+  priority?: number
+  /** 回复（入站命令）能力；不配则纯单向通知 */
+  reply?: ReplyConfigInput
+}
+
 /** 渠道配置集合 */
 export interface ChannelsConfig {
   system_message?: ChannelConfig
   screen_flash?: ScreenFlashChannelConfig
   wechat_work?: WechatWorkChannelConfig
   feishu?: FeishuChannelConfig
-  custom_webhook?: CustomWebhookChannelConfig
+  ntfy?: NtfyChannelConfig
+  gotify?: GotifyChannelConfig
+  custom_webhook?: CustomWebhookConfig
+}
+
+/** 解析后的 ntfy 渠道（reply 已展开为 ReplyConfig） */
+export interface ResolvedNtfyChannelConfig extends Omit<NtfyChannelConfig, "reply"> {
+  reply?: ReplyConfig
+}
+/** 解析后的 gotify 渠道（reply 已展开为 ReplyConfig） */
+export interface ResolvedGotifyChannelConfig extends Omit<GotifyChannelConfig, "reply"> {
+  reply?: ReplyConfig
+}
+
+/** 解析后的渠道配置（custom_webhook 已归一为 名称→配置 映射） */
+export interface ResolvedChannelsConfig {
+  system_message: ChannelConfig
+  screen_flash: ScreenFlashChannelConfig
+  wechat_work: WechatWorkChannelConfig
+  feishu: FeishuChannelConfig
+  ntfy?: ResolvedNtfyChannelConfig
+  gotify?: ResolvedGotifyChannelConfig
+  custom_webhook: Record<string, CustomWebhookChannelConfig>
 }
 
 /** 日志配置 */
@@ -144,7 +200,28 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, dirname } from "node:path"
 import yaml from "js-yaml"
-import { warn } from "./log.js"
+import { warn, info } from "./log.js"
+import type { ReplyConfig, ReplyConfigInput } from "./control/types.js"
+import { DEFAULT_BOT_TAG } from "./control/ntfy-common.js"
+
+/**
+ * 判定 custom_webhook 是"单一配置"还是"命名映射"
+ * 单一配置必带字符串 mode；命名映射的顶层没有 mode 字段。
+ */
+function isSingleWebhook(raw: CustomWebhookConfig): raw is CustomWebhookChannelConfig {
+  return typeof (raw as CustomWebhookChannelConfig).mode === "string"
+}
+
+/**
+ * 归一化 custom_webhook 配置为 名称→配置 映射
+ * - 单一对象 → { "custom_webhook": <config> }（保持旧渠道名，兼容 remote_delay_channels）
+ * - 命名映射 → 原样返回
+ */
+export function normalizeCustomWebhooks(raw: CustomWebhookConfig | undefined): Record<string, CustomWebhookChannelConfig> {
+  if (!raw) return {}
+  if (isSingleWebhook(raw)) return { custom_webhook: raw }
+  return { ...raw }
+}
 
 /** 默认配置模板内容（仅启用系统通知） */
 const DEFAULT_CONFIG_TEMPLATE = `# =============================================================================
@@ -223,28 +300,88 @@ channels:
   #   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
 
   # ---------------------------------------------------------------------------
-  # 自定义 Webhook (通用 HTTP POST)
+  # ntfy（自托管，支持通知内操作按钮 + 远程回复）
   # ---------------------------------------------------------------------------
-  # 发送 HTTP 请求到任意 Webhook 服务。
-  # 支持模板插值自动填充消息内容。
-  # 适用服务: Gotify, Bark, PushDeer, Slack Webhook, Discord Webhook 等
+  # 通知走 topic（插件→手机）；配置 reply 子块后，权限/提问通知会附带
+  # 操作按钮，手机点按即自动回传命令。
   #
-  # Gotify 配置示例:
-  #   url: "https://gotify.example.com/message"
-  #   method: "POST"
-  #   headers:
-  #     X-Gotify-Key: "your-app-token"
-  #   template: '{"title":"{{title}}","message":"{{body}}","priority":5}'
+  # 话题模式（推荐合并单话题，手机只订阅一个话题）：
+  #   省略 reply.command_topic → 命令话题=通知话题（合并）；插件靠 bot_tag
+  #     过滤自身消息防回环。
+  #   填写 reply.command_topic → 通知与命令分开两个话题（兼容旧配置）。
+  #
+  # 安全：token 为受保护话题的 Bearer token；建议设 reply.secret 作手动命令校验。
+  # 优先级：priority=通知；reply.receipt_priority=回执（默认 2）；
+  #         reply.command_priority=按钮命令（可选）
+  # ---------------------------------------------------------------------------
+  # ntfy:
+  #   mode: all                      # all | delay_only | none
+  #   server_url: "https://ntfy.example.com"
+  #   token: "tk_xxxxxxxx"           # 通知与回复共用
+  #   topic: "opencode"              # 单话题：通知 + 命令/回复
+  #   # priority: 3
+  #   # reply:
+  #   #   enabled: true
+  #   #   # command_topic: "opencode-command"   # 省略=合并进 topic（推荐）
+  #   #   transport: "stream"          # 命令读取：stream(长连接,默认) | poll(短轮询)
+  #   #   bot_tag: "opencode"          # 插件消息标记（合并模式防回环）
+  #   #   buttons: true
+  #   #   button_always: true
+  #   #   copy_button: true            # 提问/完成类附 [复制] 带令牌命令模板（仅合并模式）
+  #   #   poll_interval_ms: 3000       # 仅 transport=poll 时生效
+  #   #   token_ttl_ms: 1800000
+  #   #   max_pending: 30
+  #   #   publish_receipt: true
+  #   #   receipt_priority: 2          # 回执优先级（1-5，低于通知）
+  #   #   command_priority: 3          # 按钮命令优先级（1-5，可选）
+  #   #   secret: "your-secret"
+
+  # ---------------------------------------------------------------------------
+  # Gotify（自托管；无通知按钮，回复仅文本命令）
+  # ---------------------------------------------------------------------------
+  # 通知用 app_token（A 开头 application token）。
+  # 配置 reply 子块后可用 client_token（C 开头）读取命令话题，实现远程应答
+  # （手机需借助 HTTP Shortcuts / Tasker 等工具发命令）。
+  # ---------------------------------------------------------------------------
+  # gotify:
+  #   mode: delay_only               # all | delay_only | none
+  #   server_url: "https://gotify.example.com"
+  #   app_token: "Axxxxxxxx"
+  #   # priority: 5
+  #   # reply:
+  #   #   enabled: true
+  #   #   client_token: "Cxxxxxxxx"
+  #   #   app_id: 3
+  #   #   poll_interval_ms: 3000
+  #   #   secret: "your-secret"
+
+  # ---------------------------------------------------------------------------
+  # 自定义 Webhook（通用 HTTP POST，支持命名多配置）
+  # ---------------------------------------------------------------------------
+  # 以自定义名称作为 key，可配置多个，适配任意 HTTP 服务。
+  # 适用服务: Bark, PushDeer, Slack, Discord, 自建服务等。
+  #
+  # 配置示例:
+  #   custom_webhook:
+  #     my_slack:
+  #       mode: all
+  #       url: "https://hooks.slack.com/services/xxx"
+  #       method: "POST"
+  #       headers: {}
+  #       template: '{"text":"{{title}}\n{{body}}"}'
+  #     my_bark:
+  #       mode: delay_only
+  #       url: "https://api.day.app/xxx"
   #
   # 模板占位符: {{title}} {{body}} {{event}} {{agent}} {{sessionID}}
-  # 取消下方注释并配置 url 启用：
   # ---------------------------------------------------------------------------
   # custom_webhook:
-  #   mode: all                      # all | delay_only | none
-  #   url: ""
-  #   method: "POST"                  # 请求方法: "POST" | "GET"
-  #   headers: {}                     # 自定义请求头
-  #   template: ""                    # 消息模板（JSON 字符串）
+  #   my_webhook:
+  #     mode: all                    # all | delay_only | none
+  #     url: ""
+  #     method: "POST"                # 请求方法: "POST" | "GET"
+  #     headers: {}                   # 自定义请求头
+  #     template: ""                  # 消息模板（JSON 字符串）
 
 
 # =============================================================================
@@ -393,19 +530,44 @@ export function loadYamlConfig(): PluginConfig | null {
  * 用于 YAML 配置 + plugin options 的合并
  */
 export function mergeConfig(base: PluginConfig, overrides: PluginConfig): PluginConfig {
+  // custom_webhook 归一为 名称→配置 映射后逐项合并
+  const baseWebhooks = normalizeCustomWebhooks(base.channels?.custom_webhook)
+  const overWebhooks = normalizeCustomWebhooks(overrides.channels?.custom_webhook)
+  const mergedWebhooks: Record<string, CustomWebhookChannelConfig> = { ...baseWebhooks }
+  for (const [name, cfg] of Object.entries(overWebhooks)) {
+    mergedWebhooks[name] = { ...(baseWebhooks[name] ?? {}), ...cfg } as CustomWebhookChannelConfig
+  }
+
+  const mergedNtfy = mergeChannel(base.channels?.ntfy, overrides.channels?.ntfy) as NtfyChannelConfig | undefined
+  const mergedGotify = mergeChannel(base.channels?.gotify, overrides.channels?.gotify) as GotifyChannelConfig | undefined
+
   return {
     ...base,
     ...overrides,
     channels: {
       ...(base.channels ?? {}),
       ...(overrides.channels ?? {}),
-      system_message: { ...(base.channels?.system_message ?? {}), ...(overrides.channels?.system_message ?? {}) } as ChannelConfig,
-      screen_flash: { ...(base.channels?.screen_flash ?? {}), ...(overrides.channels?.screen_flash ?? {}) } as ScreenFlashChannelConfig,
-      wechat_work: { ...(base.channels?.wechat_work ?? {}), ...(overrides.channels?.wechat_work ?? {}) } as WechatWorkChannelConfig,
-      feishu: { ...(base.channels?.feishu ?? {}), ...(overrides.channels?.feishu ?? {}) } as FeishuChannelConfig,
-      custom_webhook: { ...(base.channels?.custom_webhook ?? {}), ...(overrides.channels?.custom_webhook ?? {}) } as CustomWebhookChannelConfig,
+      system_message: mergeChannel(base.channels?.system_message, overrides.channels?.system_message) as ChannelConfig,
+      screen_flash: mergeChannel(base.channels?.screen_flash, overrides.channels?.screen_flash) as ScreenFlashChannelConfig,
+      wechat_work: mergeChannel(base.channels?.wechat_work, overrides.channels?.wechat_work) as WechatWorkChannelConfig,
+      feishu: mergeChannel(base.channels?.feishu, overrides.channels?.feishu) as FeishuChannelConfig,
+      ntfy: mergedNtfy,
+      gotify: mergedGotify,
+      custom_webhook: mergedWebhooks,
     },
   }
+}
+
+/** 合并单个渠道：reply 子块一并深合并 */
+function mergeChannel<T extends ChannelConfig>(base?: T, over?: T): T | undefined {
+  if (!base && !over) return undefined
+  const merged = { ...(base ?? {}), ...(over ?? {}) } as T
+  const b = base as { reply?: ReplyConfigInput } | undefined
+  const o = over as { reply?: ReplyConfigInput } | undefined
+  if (b?.reply || o?.reply) {
+    (merged as { reply?: ReplyConfigInput }).reply = { ...(b?.reply ?? {}), ...(o?.reply ?? {}) }
+  }
+  return merged
 }
 
 /** 默认配置 */
@@ -415,7 +577,6 @@ const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "acti
     screen_flash: { mode: "none" },
     wechat_work: { mode: "none" },
     feishu: { mode: "none" },
-    custom_webhook: { mode: "none" },
   },
   events: [
     "permission_required",
@@ -434,10 +595,15 @@ const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "acti
   log: { level: "off", file: undefined },
 }
 
+/** 解析后的插件配置（channels 已补全默认值，custom_webhook 已归一） */
+export interface ResolvedPluginConfig extends Omit<PluginConfig, "channels"> {
+  channels: ResolvedChannelsConfig
+}
+
 /**
  * 合并配置：options → 默认值
  */
-export function resolveConfig(options: PluginConfig): PluginConfig {
+export function resolveConfig(options: PluginConfig): ResolvedPluginConfig {
   // 全局 events，各渠道继承此值
   const globalEvents = options.events ?? DEFAULT_CONFIG.events
 
@@ -445,6 +611,15 @@ export function resolveConfig(options: PluginConfig): PluginConfig {
   function chEvents(ch: ChannelConfig | undefined): string[] | undefined {
     return ch?.events?.length ? ch.events : undefined
   }
+
+  // custom_webhook 归一化为 名称→配置 映射，并补全 method 默认值
+  const webhooks = normalizeCustomWebhooks(options.channels?.custom_webhook)
+  for (const [name, cfg] of Object.entries(webhooks)) {
+    webhooks[name] = { ...cfg, method: cfg.method ?? "POST" }
+  }
+
+  const ntfyIn = options.channels?.ntfy
+  const gotifyIn = options.channels?.gotify
 
   return {
     channels: {
@@ -477,17 +652,28 @@ export function resolveConfig(options: PluginConfig): PluginConfig {
         webhook_url: options.channels?.feishu?.webhook_url || undefined,
         events: chEvents(options.channels?.feishu),
       },
-      custom_webhook: {
-        mode:
-          options.channels?.custom_webhook?.mode ??
-          DEFAULT_CONFIG.channels?.custom_webhook?.mode ??
-          "none",
-        url: options.channels?.custom_webhook?.url || undefined,
-        method: options.channels?.custom_webhook?.method ?? "POST",
-        headers: options.channels?.custom_webhook?.headers,
-        template: options.channels?.custom_webhook?.template,
-        events: chEvents(options.channels?.custom_webhook),
-      },
+      ntfy: ntfyIn
+        ? {
+            mode: ntfyIn.mode,
+            events: chEvents(ntfyIn),
+            server_url: ntfyIn.server_url?.replace(/\/+$/, "") || undefined,
+            token: ntfyIn.token || undefined,
+            topic: ntfyIn.topic || undefined,
+            priority: ntfyIn.priority,
+            reply: resolveReplyConfig("ntfy", ntfyIn),
+          }
+        : undefined,
+      gotify: gotifyIn
+        ? {
+            mode: gotifyIn.mode,
+            events: chEvents(gotifyIn),
+            server_url: gotifyIn.server_url?.replace(/\/+$/, "") || undefined,
+            app_token: gotifyIn.app_token || undefined,
+            priority: gotifyIn.priority,
+            reply: resolveReplyConfig("gotify", gotifyIn),
+          }
+        : undefined,
+      custom_webhook: webhooks,
     },
     events: globalEvents,
     dedupe_seconds: options.dedupe_seconds ?? DEFAULT_CONFIG.dedupe_seconds,
@@ -502,5 +688,85 @@ export function resolveConfig(options: PluginConfig): PluginConfig {
       level: options.log?.level ?? DEFAULT_CONFIG.log?.level ?? "info",
       file: options.log?.file,
     },
+  }
+}
+
+/**
+ * 解析渠道的 reply（回复/命令）配置 → ReplyConfig
+ * 未配置或未启用返回 undefined；启用时校验必需字段并按需告警
+ */
+function resolveReplyConfig(
+  provider: "ntfy" | "gotify",
+  ch: NtfyChannelConfig | GotifyChannelConfig,
+): ReplyConfig | undefined {
+  const r = ch.reply
+  if (!r || !r.enabled) return undefined
+
+  const serverUrl = (ch.server_url ?? "").replace(/\/+$/, "")
+
+  if (provider === "ntfy") {
+    const notifyTopic = (ch as NtfyChannelConfig).topic
+    const configuredCommandTopic = r.command_topic
+    const token = (ch as NtfyChannelConfig).token
+    // 合并单话题：省略 command_topic，或显式填成与 topic 相同 → 命令话题 = 通知话题。
+    // 合并模式下插件订阅自己发布的话题，靠 bot_tag 过滤自身消息防回环。
+    const merged = !configuredCommandTopic || configuredCommandTopic === notifyTopic
+    const commandTopic = merged ? notifyTopic : configuredCommandTopic
+    const botTag = r.bot_tag || DEFAULT_BOT_TAG
+    const buttons = r.buttons ?? true
+    if (merged && notifyTopic) {
+      info(`channels.ntfy.reply: 合并单话题模式，command_topic = topic (${notifyTopic})，靠 bot_tag="${botTag}" 过滤自身消息`)
+    }
+    if (!serverUrl || !commandTopic || !token) {
+      warn("channels.ntfy.reply: 缺少 server_url / token / command_topic（或 topic），回复功能未启用")
+      return undefined
+    }
+    return {
+      provider,
+      serverUrl,
+      enabled: true,
+      pollIntervalMs: r.poll_interval_ms ?? 3000,
+      tokenTtlMs: r.token_ttl_ms ?? 30 * 60 * 1000,
+      maxPending: r.max_pending ?? 30,
+      secret: r.secret || undefined,
+      receipt: r.publish_receipt ?? true,
+      receiptPriority: r.receipt_priority ?? 2,
+      buttons,
+      buttonAlways: r.button_always ?? true,
+      ntfyToken: token,
+      commandTopic,
+      // 回执与通知共用同一话题（channel.topic）
+      notifyTopic,
+      commandPriority: r.command_priority,
+      transport: r.transport === "poll" ? "poll" : "stream",
+      merged,
+      botTag,
+      copyButton: merged && (r.copy_button ?? true),
+    }
+  }
+
+  // gotify：无按钮，仅文本命令
+  if (!serverUrl || !r.client_token || !r.app_id) {
+    warn("channels.gotify.reply: 缺少 server_url / client_token / app_id，回复功能未启用")
+    return undefined
+  }
+  return {
+    provider,
+    serverUrl,
+    enabled: true,
+    pollIntervalMs: r.poll_interval_ms ?? 3000,
+    tokenTtlMs: r.token_ttl_ms ?? 30 * 60 * 1000,
+    maxPending: r.max_pending ?? 30,
+    secret: r.secret || undefined,
+    receipt: r.publish_receipt ?? true,
+    receiptPriority: r.receipt_priority ?? 2,
+    buttons: false,
+    buttonAlways: false,
+    appToken: (ch as GotifyChannelConfig).app_token,
+    clientToken: r.client_token,
+    appId: r.app_id,
+    merged: false,
+    botTag: DEFAULT_BOT_TAG,
+    copyButton: false,
   }
 }

@@ -5,7 +5,7 @@
  * 用法:
  *   bun cli.ts check              检查配置文件的正确性
  *   bun cli.ts test                测试所有已启用的通知渠道
- *   bun cli.ts test <channel>      测试指定渠道 (system|wechat_work|feishu|custom_webhook)
+ *   bun cli.ts test <channel>      测试指定渠道 (system_message|ntfy|gotify|wechat_work|feishu|<自定义webhook名>)
  *   bun cli.ts log [lines]         查看最近 N 行插件日志 (默认 20)
  *   bun cli.ts info                显示插件版本、配置、渠道状态等综合信息
  *   bun cli.ts help                显示帮助
@@ -16,6 +16,8 @@ import type { PluginConfig, ChannelsConfig } from "./config.js"
 import type { Message } from "./message.js"
 import { SystemSender } from "./senders/system/index.js"
 import { CustomWebhookSender } from "./senders/custom-webhook.js"
+import { NtfyNotifySender } from "./senders/ntfy.js"
+import { GotifyNotifySender } from "./senders/gotify.js"
 import { WechatWorkSender } from "./senders/wechat-work.js"
 import { FeishuSender } from "./senders/feishu.js"
 import { readFileSync, existsSync, statSync } from "node:fs"
@@ -117,43 +119,52 @@ function cmdCheck() {
   const channels = cfg.channels ?? {}
   let hasError = false
 
-  for (const [name, ch] of Object.entries(channels)) {
+  // 固定渠道
+  const fixed: [string, any][] = [
+    ["系统通知", channels.system_message],
+    ["屏幕跑马灯", channels.screen_flash],
+    ["企业微信", channels.wechat_work],
+    ["飞书", channels.feishu],
+    ["ntfy", channels.ntfy],
+    ["Gotify", channels.gotify],
+  ]
+  for (const [label, ch] of fixed) {
     if (!ch || !ch.mode || ch.mode === "none") continue
 
-    switch (name) {
-      case "system":
-        console.log(`\n✅ 系统通知: 已启用`)
-        break
-      case "custom_webhook": {
-        const c = ch as any
-        if (!c.url) {
-          console.log(`\n❌ 自定义 Webhook: 已启用但未配置 url`)
-          hasError = true
-        } else {
-          console.log(`\n✅ 自定义 Webhook: url=${c.url}`)
-        }
-        break
+    if (label === "企业微信" || label === "飞书") {
+      if (!ch.webhook_url) {
+        console.log(`\n❌ ${label}: 已启用但未配置 webhook_url`)
+        hasError = true
+      } else {
+        console.log(`\n✅ ${label}: webhook_url=${ch.webhook_url.slice(0, 60)}...`)
       }
-      case "wechat_work": {
-        const c = ch as any
-        if (!c.webhook_url) {
-          console.log(`\n❌ 企业微信: 已启用但未配置 webhook_url`)
-          hasError = true
-        } else {
-          console.log(`\n✅ 企业微信: webhook_url=${c.webhook_url.slice(0, 60)}...`)
-        }
-        break
+    } else if (label === "ntfy") {
+      if (!ch.server_url || !ch.topic) {
+        console.log(`\n❌ ntfy: 已启用但缺少 server_url / topic`)
+        hasError = true
+      } else {
+        console.log(`\n✅ ntfy: ${ch.topic} @ ${ch.server_url}${ch.reply ? "（含回复）" : ""}`)
       }
-      case "feishu": {
-        const c = ch as any
-        if (!c.webhook_url) {
-          console.log(`\n❌ 飞书: 已启用但未配置 webhook_url`)
-          hasError = true
-        } else {
-          console.log(`\n✅ 飞书: webhook_url=${c.webhook_url.slice(0, 60)}...`)
-        }
-        break
+    } else if (label === "Gotify") {
+      if (!ch.server_url || !ch.app_token) {
+        console.log(`\n❌ Gotify: 已启用但缺少 server_url / app_token`)
+        hasError = true
+      } else {
+        console.log(`\n✅ Gotify: ${ch.server_url}${ch.reply ? "（含回复）" : ""}`)
       }
+    } else {
+      console.log(`\n✅ ${label}: 已启用`)
+    }
+  }
+
+  // 命名自定义 webhook
+  for (const [name, wh] of Object.entries(channels.custom_webhook ?? {})) {
+    if (!wh || !wh.mode || wh.mode === "none") continue
+    if (!wh.url) {
+      console.log(`\n❌ 自定义 Webhook(${name}): 已启用但未配置 url`)
+      hasError = true
+    } else {
+      console.log(`\n✅ 自定义 Webhook(${name}): url=${wh.url.slice(0, 60)}`)
     }
   }
 
@@ -196,10 +207,13 @@ async function cmdTest(channel?: string) {
     await new SystemSender().send(SAMPLE_MSG)
   })
 
-  if (modeOk(channels.custom_webhook?.mode) && channels.custom_webhook?.url) {
-    add("custom_webhook", true, async () => {
-      await new CustomWebhookSender(channels.custom_webhook!).send(SAMPLE_MSG)
-    })
+  // 自定义 Webhook：命名多配置，逐个作为可测试渠道
+  for (const [name, wh] of Object.entries(channels.custom_webhook ?? {})) {
+    if (modeOk(wh.mode) && wh.url) {
+      add(name, true, async () => {
+        await new CustomWebhookSender(wh).send(SAMPLE_MSG)
+      })
+    }
   }
 
   if (modeOk(channels.wechat_work?.mode) && channels.wechat_work?.webhook_url) {
@@ -214,6 +228,20 @@ async function cmdTest(channel?: string) {
     })
   }
 
+  if (modeOk(channels.ntfy?.mode) && channels.ntfy?.server_url && channels.ntfy?.topic && channels.ntfy?.token) {
+    add("ntfy", true, async () => {
+      await new NtfyNotifySender(
+        channels.ntfy!.server_url!, channels.ntfy!.topic!, "", channels.ntfy!.token, channels.ntfy!.priority,
+      ).send(SAMPLE_MSG)
+    })
+  }
+
+  if (modeOk(channels.gotify?.mode) && channels.gotify?.server_url && channels.gotify?.app_token) {
+    add("gotify", true, async () => {
+      await new GotifyNotifySender(channels.gotify!.server_url!, channels.gotify!.app_token!, channels.gotify!.priority).send(SAMPLE_MSG)
+    })
+  }
+
   // 过滤
   const targets = channel
     ? allChannels.filter(([n]) => n === channel)
@@ -221,7 +249,7 @@ async function cmdTest(channel?: string) {
 
   if (targets.length === 0) {
     console.log(`没有匹配的渠道。${channel ? `渠道 "${channel}" 不存在或未启用。` : "请在配置文件中启用至少一个渠道。"}`)
-    console.log("可用渠道: system, custom_webhook, wechat_work, feishu")
+    console.log("可用渠道: system_message, ntfy, gotify, wechat_work, feishu 及自定义 webhook 名")
     process.exit(1)
   }
 
@@ -319,9 +347,13 @@ function cmdInfo() {
     const channelNames: [string, any, string][] = [
       ["系统消息", ch.system_message, ""],
       ["屏幕跑马灯", ch.screen_flash, ch.screen_flash?.mode !== "none" ? `强度${ch.screen_flash?.intensity ?? 0.9}` : ""],
-      ["自定义 Webhook", ch.custom_webhook, ch.custom_webhook?.url ?? ""],
       ["企业微信", ch.wechat_work, ch.wechat_work?.webhook_url ? `${ch.wechat_work.webhook_url.slice(0, 40)}...` : ""],
       ["飞书", ch.feishu, ch.feishu?.webhook_url ? `${ch.feishu.webhook_url.slice(0, 40)}...` : ""],
+      ["ntfy", ch.ntfy, ch.ntfy?.topic ? `${ch.ntfy.topic}${ch.ntfy.reply ? " +回复" : ""}` : ""],
+      ["Gotify", ch.gotify, ch.gotify?.server_url ? `${ch.gotify.server_url.slice(0, 40)}${ch.gotify.reply ? " +回复" : ""}` : ""],
+      ...Object.entries(ch.custom_webhook ?? {}).map(
+        ([name, wh]) => [`Webhook(${name})`, wh, (wh as { url?: string }).url ?? ""] as [string, any, string],
+      ),
     ]
     for (const [label, config, url] of channelNames) {
       if (config?.mode !== "none") {
@@ -360,10 +392,12 @@ function cmdHelp() {
   console.log("  bun cli.ts help                显示此帮助")
   console.log("")
   console.log("渠道名称:")
-  console.log("  system          系统通知")
+  console.log("  system_message  系统通知")
+  console.log("  ntfy            ntfy 通知")
+  console.log("  gotify          Gotify 通知")
   console.log("  wechat_work     企业微信")
   console.log("  feishu          飞书")
-  console.log("  custom_webhook  自定义 Webhook")
+  console.log("  <自定义名>      channels.custom_webhook 下的自定义 webhook")
   console.log("")
   console.log("示例:")
   console.log("  bun cli.ts check")

@@ -1,5 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin"
-import type { PluginConfig } from "./config.js"
+import type { PluginConfig, ResolvedPluginConfig } from "./config.js"
 import { resolveConfig, loadYamlConfig, mergeConfig, ensureConfigFile } from "./config.js"
 import { route } from "./events.js"
 import { enrich, formatTitle, defaultBody, formatBody } from "./message.js"
@@ -16,6 +16,9 @@ import { SessionTracker } from "./session-tracker.js"
 import { configureLog, error, warn, info, debug } from "./log.js"
 import { DelayedDispatcher } from "./delayed-dispatcher.js"
 import { isTerminalOccluded } from "./terminator-detect.js"
+import { ControlController } from "./control/controller.js"
+import { NtfyNotifySender } from "./senders/ntfy.js"
+import { GotifyNotifySender } from "./senders/gotify.js"
 
 // 用户活跃事件类型（这些事件表明用户正在操作 opencode 的某个会话）
 const USER_ACTIVITY_EVENTS = new Set([
@@ -63,6 +66,22 @@ const plugin: Plugin = async (_input, options) => {
     // 会话感知抑制
     const tracker = new SessionTracker(cfg.session_stale_timeout_ms)
 
+    // 远程控制通道（手机 → 插件 → opencode 应答；全部出站连接）
+    // reply 配置挂在通知渠道下（channels.ntfy.reply / channels.gotify.reply），
+    // 二者互斥取其一（同一进程只启动一个命令通道）。
+    const replyCfg = cfg.channels.ntfy?.reply ?? cfg.channels.gotify?.reply
+    const control = replyCfg
+      ? new ControlController(
+          replyCfg,
+          String(_input.serverUrl ?? ""),
+          _input.directory,
+          // 传入 opencode 注入的 client（v1，含底层内存 fetch + 认证头）。
+          // 控制器会从中提取 fetch/headers 构造 v2 client，兼容直跑与 server 两种模式。
+          _input.client,
+        )
+      : undefined
+    control?.start()
+
     info(`插件已加载, log_level=${cfg.log?.level}, events=${JSON.stringify(cfg.events)}, `
       + `suppressActive=${cfg.suppress_when_active}, timeout=${cfg.activity_timeout ?? 60}s, `
       + `suppressEvents=${JSON.stringify(cfg.suppress_events_when_active)}, `
@@ -70,6 +89,12 @@ const plugin: Plugin = async (_input, options) => {
       + `terminator_detect=${!!process.env.TERMINATOR_UUID}`)
 
     return {
+      /**
+       * 插件卸载/进程退出时清理控制通道定时器
+       */
+      dispose: async () => {
+        control?.stop()
+      },
       /**
        * chat.message — 用户发送新消息时回调
        * 从 parts 中提取 TextPart.text
@@ -117,6 +142,12 @@ const plugin: Plugin = async (_input, options) => {
             debug(`→ 用户活跃事件, 会话=${sessionID}`)
           }
 
+          // 权限/提问被回应（含 TUI 内操作）→ 清理待处理，避免手机重复应答
+          if (type === "permission.replied" || type === "question.replied" || type === "question.rejected") {
+            const reqID = String(properties?.requestID ?? properties?.permissionID ?? "")
+            if (reqID) control?.resolvePending(reqID)
+          }
+
           // message.part.updated — 累积助手回复文本（防抖：只记录最后一段的文本片段）
           if (type === "message.part.updated") {
             const part = properties?.part
@@ -154,6 +185,7 @@ const plugin: Plugin = async (_input, options) => {
           }
           if (type === "session.deleted") {
             tracker.remove(sessionID)
+            control?.forgetSession(sessionID)
             // 不取消延迟推送：会话删除（包括 opencode 自动清理）不代表用户已看到通知
             debug(`→ 会话已删除, 会话=${sessionID}`)
           }
@@ -215,6 +247,58 @@ const plugin: Plugin = async (_input, options) => {
           if (assistantSummary) info(`→ 通知输出摘要: "${assistantSummary.slice(0, 100)}"`)
           enrich(msg, sessionTopic, userPrompt, assistantSummary)
 
+          // 远程控制：所有通知附带会话码（供 say/stop 精确寻址）；
+          // 权限/提问额外登记一次性令牌并生成 ntfy 按钮（点按即回传命令）。
+          // 注意：events.ts 把 question.asked 也映射为 permission_required，
+          // 因此必须按原始 type 区分，不能只看 msg.event。
+          if (control) {
+            if (type === "question.asked") {
+              const reqID = String(properties?.id ?? properties?.requestID ?? "")
+              if (reqID) {
+                const q0 = (properties?.questions as Array<{ question?: string; options?: Array<{ label?: string }> }> | undefined)?.[0]
+                const options = q0?.options?.map((o) => String(o.label ?? "")).filter(Boolean)
+                const item = control.registerPending(
+                  "question", reqID, sessionID, String(q0?.question ?? "提问"), options,
+                )
+                if (item.code) {
+                  msg.controlButtons = control.buildButtons(item)
+                  // 选项 ≥3 时按钮放不下（ntfy 硬限 3 个），必须在正文列出编号供数字回复
+                  if (options && options.length >= 3) {
+                    msg.body += "\n选项：\n" + options.map((o, i) => `  ${i + 1}. ${o}`).join("\n")
+                  }
+                  msg.body += `\n令牌：${item.code}`
+                  msg.replyHint = options && options.length > 0
+                    ? `📱 回复: select <令牌> 1~${options.length}=选选项 · answer <令牌> 文本`
+                    : "📱 回复: answer <令牌> 文本"
+                }
+                // 每条提问都是独立请求：去重 key 含 requestID，避免同会话连续提问被吞
+                msg.dedupeKey = `opencode:question:${reqID}`
+              }
+            } else if (type === "permission.asked" || type === "permission.updated") {
+              const reqID = String(properties?.id ?? properties?.requestID ?? "")
+              if (reqID) {
+                const item = control.registerPending(
+                  "permission", reqID, sessionID, String(properties?.permission ?? "权限请求"),
+                )
+                if (item.code) {
+                  msg.controlButtons = control.buildButtons(item)
+                  msg.body += `\n令牌：${item.code}`
+                  msg.replyHint = "📱 回复: approve/deny/always <令牌>"}
+                msg.dedupeKey = `opencode:permission:${reqID}`
+              }
+            } else if (msg.event === "run_completed" || msg.event === "run_failed" || msg.event === "run_cancelled") {
+              const btns: import("./control/types.js").ControlButton[] = []
+              const copy = control.buildSayCopyButton(sessionID)
+              if (copy) btns.push(copy)
+              btns.push(control.buildStatusButton(sessionID))
+              msg.controlButtons = btns
+              // 凭证强制协议：所有回复必须带续接令牌（TTL 内可反复 say/stop）
+              msg.replyHint = "📱 回复: say <令牌> 文本=继续 · stop <令牌>=中断 · status <令牌>=状态"
+            }
+            const sc = control.sessionCode(sessionID)
+            if (sc) msg.body += `\n会话码：${sc}`
+          }
+
           debug(`→ 匹配通知: ${msg.event} topic="${sessionTopic ?? ""}" prompt="${(userPrompt ?? "").slice(0, 80)}"`)
 
           // 子会话（background task）：只保留授权/提问通知，完成/取消/失败均静默
@@ -270,7 +354,7 @@ interface BuildSendersResult {
   senderMap: Map<string, import("./senders/types.js").Sender>
 }
 
-function buildSenders(cfg: PluginConfig): BuildSendersResult {
+function buildSenders(cfg: ResolvedPluginConfig): BuildSendersResult {
   const senders: import("./senders/types.js").Sender[] = []
   const senderMap = new Map<string, import("./senders/types.js").Sender>()
   const globalEvents = cfg.events ?? []
@@ -314,12 +398,36 @@ function buildSenders(cfg: PluginConfig): BuildSendersResult {
     () => new SystemSender(), "系统通知")
   register("screen_flash", ch?.screen_flash?.mode, ch?.screen_flash?.events,
     () => new ScreenFlashSender(ch?.screen_flash ?? { mode: "none" }), "屏幕跑马灯")
-  register("custom_webhook", ch?.custom_webhook?.mode, ch?.custom_webhook?.events,
-    () => new CustomWebhookSender(ch?.custom_webhook ?? { mode: "none" }), "自定义 Webhook")
   register("wechat_work", ch?.wechat_work?.mode, ch?.wechat_work?.events,
     () => new WechatWorkSender(ch?.wechat_work ?? { mode: "none" }), "企业微信")
   register("feishu", ch?.feishu?.mode, ch?.feishu?.events,
     () => new FeishuSender(ch?.feishu ?? { mode: "none" }), "飞书")
+
+  // ntfy 通知渠道（可选承载操作按钮）
+  register("ntfy", ch?.ntfy?.mode, ch?.ntfy?.events,
+    () => new NtfyNotifySender(
+      ch!.ntfy!.server_url ?? "",
+      ch!.ntfy!.topic ?? "",
+      ch!.ntfy!.reply?.commandTopic ?? "",
+      ch!.ntfy!.token,
+      ch!.ntfy!.priority,
+      ch!.ntfy!.reply?.commandPriority,
+      ch!.ntfy!.reply?.botTag,
+    ), "ntfy 通知")
+
+  // gotify 通知渠道（无按钮）
+  register("gotify", ch?.gotify?.mode, ch?.gotify?.events,
+    () => new GotifyNotifySender(
+      ch!.gotify!.server_url ?? "",
+      ch!.gotify!.app_token ?? "",
+      ch!.gotify!.priority,
+    ), "Gotify 通知")
+
+  // 自定义 Webhook：命名多配置，逐个注册（渠道名 = 用户自定义名）
+  for (const [name, wh] of Object.entries(ch?.custom_webhook ?? {})) {
+    register(name, wh.mode, wh.events,
+      () => new CustomWebhookSender(wh), `自定义 Webhook(${name})`)
+  }
 
   return { senders, senderMap }
 }

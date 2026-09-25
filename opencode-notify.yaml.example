@@ -74,28 +74,83 @@ channels:
   #   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
 
   # ---------------------------------------------------------------------------
-  # 自定义 Webhook (通用 HTTP POST)
+  # ntfy（自托管，支持通知内操作按钮 + 远程回复）
   # ---------------------------------------------------------------------------
-  # 发送 HTTP 请求到任意 Webhook 服务。
-  # 支持模板插值自动填充消息内容。
-  # 适用服务: Gotify, Bark, PushDeer, Slack Webhook, Discord Webhook 等
+  # 通知走 topic；配置 reply 后，权限/提问通知会附带操作按钮，手机点按即自动
+  # 回传命令，无需手动发消息。详见文末「远程控制」。
   #
-  # Gotify 配置示例:
-  #   url: "https://gotify.example.com/message"
-  #   method: "POST"
-  #   headers:
-  #     X-Gotify-Key: "your-app-token"
-  #   template: '{"title":"{{title}}","message":"{{body}}","priority":5}'
+  # 话题模式（推荐合并单话题，手机只订阅一个话题）：
+  #   省略 reply.command_topic → 命令话题=通知话题（合并）。手机在同一话题收通知、
+  #     发回复；插件靠 bot_tag 过滤自身消息防回环（见 reply.bot_tag）。
+  #   填写 reply.command_topic → 通知与命令分开两个话题（兼容旧配置）。
+  # ---------------------------------------------------------------------------
+  # ntfy:
+  #   mode: all                      # all | delay_only | none
+  #   server_url: "https://ntfy.example.com"
+  #   token: "tk_xxxxxxxx"           # 受保护话题的 Bearer token（通知与回复共用）
+  #   topic: "opencode"              # 单话题：通知 + 命令/回复
+  #   # priority: 3
+  #   # reply:
+  #   #   enabled: true
+  #   #   # command_topic: "opencode-command"   # 省略=合并进 topic（推荐）；填写=分两个话题
+  #   #   transport: "stream"          # 命令读取：stream(长连接,默认) | poll(短轮询)
+  #   #   bot_tag: "opencode"          # 插件消息标记（合并模式防回环；非 emoji tag 弹窗不显示）
+  #   #   buttons: true                # 通知附带操作按钮（http）
+  #   #   button_always: true          # 权限按钮含"始终允许"
+  #   #   copy_button: true            # 提问/完成类附 [复制] 带令牌命令模板（仅合并模式）
+  #   #   poll_interval_ms: 3000       # 仅 transport=poll 时生效
+  #   #   token_ttl_ms: 1800000
+  #   #   max_pending: 30
+  #   #   publish_receipt: true
+  #   #   receipt_priority: 2          # 回执优先级（1-5，低于通知）
+  #   #   command_priority: 3          # 按钮命令优先级（1-5，可选）
+  #   #   secret: "your-secret"
+
+  # ---------------------------------------------------------------------------
+  # Gotify（自托管；无通知按钮，回复仅文本命令）
+  # ---------------------------------------------------------------------------
+  # app_token（A 开头）发通知/回执。配置 reply 后可读命令话题实现远程应答
+  # （读取必须用 client_token（C 开头）；手机需 HTTP Shortcuts / Tasker 等发命令）。
+  #   reply.client_token / reply.app_id / reply.secret
+  # ---------------------------------------------------------------------------
+  # gotify:
+  #   mode: delay_only               # all | delay_only | none
+  #   server_url: "https://gotify.example.com"
+  #   app_token: "Axxxxxxxx"
+  #   # priority: 5
+  #   # reply:
+  #   #   enabled: true
+  #   #   client_token: "Cxxxxxxxx"
+  #   #   app_id: 3
+  #   #   poll_interval_ms: 3000
+  #   #   publish_receipt: true
+  #   #   secret: "your-secret"
+
+  # ---------------------------------------------------------------------------
+  # 自定义 Webhook（通用 HTTP POST，支持命名多配置）
+  # ---------------------------------------------------------------------------
+  # 以自定义名称作为 key，可配置多个，适配任意 HTTP 服务（Bark / PushDeer /
+  # Slack / Discord / 自建服务等）。支持模板插值自动填充消息内容。
+  #
+  # 配置示例:
+  #   custom_webhook:
+  #     my_slack:
+  #       mode: all
+  #       url: "https://hooks.slack.com/services/xxx"
+  #       template: '{"text":"{{title}}\n{{body}}"}'
+  #     my_bark:
+  #       mode: delay_only
+  #       url: "https://api.day.app/xxx"
   #
   # 模板占位符: {{title}} {{body}} {{event}} {{agent}} {{sessionID}}
-  # 取消下方注释并配置 url 启用：
   # ---------------------------------------------------------------------------
   # custom_webhook:
-  #   mode: all                      # all | delay_only | none
-  #   url: ""
-  #   method: "POST"                  # 请求方法: "POST" | "GET"
-  #   headers: {}                     # 自定义请求头
-  #   template: ""                    # 消息模板（JSON 字符串）
+  #   my_webhook:
+  #     mode: all                    # all | delay_only | none
+  #     url: ""
+  #     method: "POST"                # 请求方法: "POST" | "GET"
+  #     headers: {}                   # 自定义请求头
+  #     template: ""                  # 消息模板（JSON 字符串）
 
 
 # =============================================================================
@@ -186,10 +241,39 @@ session_stale_timeout_ms: 600000     # 超时会话自动淘汰（毫秒）
 # ---------------------------------------------------------------------------
 remote_delay_channels: []            # 启用的延迟推送渠道列表
                                      # 可选: system_message, screen_flash,
-                                     #       wechat_work, feishu, custom_webhook
+                                     #       wechat_work, feishu, ntfy, gotify,
+                                     #       以及自定义 webhook 名
                                      # 空 = 不启用延迟推送
 # remote_delay_seconds: 60           # 延迟秒数（默认 60）
 # remote_delay_max_count: 3          # 最多重复次数（默认 3）
+
+
+# =============================================================================
+# 远程控制（手机 → 插件 → opencode 应答）—— 配置在 channels 的 reply 子块
+# =============================================================================
+# 回复能力挂在通知渠道下（channels.ntfy.reply / channels.gotify.reply），
+# 与通知共用 server_url / token，无需单独的顶层配置块。
+# 插件只做出站轮询，不监听任何端口，适合公司电脑等无公网入口场景。
+#
+# 启用后，权限/提问通知会附带**一次性令牌**（如 oc-1a2b-3c4d5e）供定点应答；
+# 用 ntfy 时通知底部还会渲染**操作按钮**——手机直接点按即可，无需手动发消息。
+#
+# 可用命令（动词可放标题或正文）：
+#   approve / always / deny [令牌]   允许一次 / 始终允许 / 拒绝（权限）
+#   answer <文本> [令牌]             回答提问
+#   say <文本> [会话码 sc-xxxx]      向会话追加指令（等于远程继续对话）
+#   stop [会话码 sc-xxxx]            中断当前任务
+#   status / help                    查看待处理 / 帮助
+# 手动文本命令需以 secret 作为正文第一个词；携带一次性令牌的回调免 secret。
+#
+# 防重复：令牌为一次性，用后即废；TTL 到期自动失效；多 opencode 进程下
+#         只有持有该令牌的进程会执行（令牌含本进程实例前缀，其余进程忽略）。
+#
+# ⚠️ 安全：此通道可批准任意工具（含 shell）在电脑执行，等于远程操作电脑。
+#    务必设置 secret 或使用受保护话题；token/secret 不要提交到仓库。
+#
+# 具体配置见上方 channels.ntfy.reply / channels.gotify.reply 的注释与示例。
+# ---------------------------------------------------------------------------
 
 
 # =============================================================================

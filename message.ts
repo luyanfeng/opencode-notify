@@ -14,6 +14,21 @@ export interface Message {
   workspace?: string
   /** 用户最后一次输入内容 */
   userPrompt?: string
+  /** 操作按钮（仅 ntfy 通知发送器会渲染为 Actions） */
+  controlButtons?: import("./control/types.js").ControlButton[]
+  /**
+   * 可回复命令提示（仅 ntfy 渠道追加到正文末尾，帮助用户免记命令）。
+   * 由 index.ts 按事件类型/选项数生成；其它渠道忽略。
+   */
+  replyHint?: string
+  /**
+   * 去重 key 覆盖（可选）。
+   * 权限/提问每条都是**不同请求**（各带唯一令牌），用默认 key
+   * `agent:event:sessionID` 会把同会话 60s 内的第 2 条提问吞掉——
+   * 那是用户必须看到的请求。故权限/提问用含 requestID 的独立 key；
+   * 其余事件沿用默认。
+   */
+  dedupeKey?: string
 }
 
 /** 事件中文标签映射 */

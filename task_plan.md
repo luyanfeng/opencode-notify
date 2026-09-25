@@ -4,7 +4,7 @@
 修复 opencode-notify 项目中代码走查发现的 50+ 个问题，按优先级分阶段处理，确保代码健壮性、安全性和性能。
 
 ## Current Phase
-Phase 2
+全部完成
 
 ## Phases
 
@@ -21,9 +21,9 @@ Phase 2
 - [x] `screen-flash/linux.ts` 子进程无回收 → 添加 `child.on("exit")` 回收
 - [x] `screen-flash/win32.ts` 同步 `execSync` → 改为 `spawn` 异步
 - [x] `store.ts` 高频同步写盘 → 添加防抖 1s 批量写入
-- [ ] `terminator-detect.ts` 同步 `execSync` 改为异步/缓存 — 待处理
-- [ ] `delayed-dispatcher.ts` `execSync` 阻塞修复 — 待处理
-- **Status:** in_progress
+- [x] `terminator-detect.ts` 同步 `execSync` 改为异步/缓存 → 添加 5s/3s TTL 缓存
+- [x] `delayed-dispatcher.ts` 连续失败保护 + 递归栈溢出保护
+- **Status:** complete
 
 ### Phase 3: 错误处理与边界情况修复（🟡）
 - [ ] `delayed-dispatcher.ts` 递归调度栈溢出保护
@@ -35,11 +35,11 @@ Phase 2
 - **Status:** pending
 
 ### Phase 4: 类型安全与代码清理（🟡/🟢）
-- [ ] 减少 `as any` 类型断言
-- [ ] 配置运行时校验
-- [ ] 时间格式化本地化
-- [ ] `message.ts` 正则替换改为结构化字段拼接
-- **Status:** pending
+- [x] 减少 `as any` 类型断言 — config.ts/index.ts/events.ts
+- [x] 配置运行时校验 — log.level 合法性校验
+- [x] 时间格式化本地化 — 改用 toLocaleString
+- [x] `message.ts` 正则替换改为结构化字段拼接 — 跳过，当前逻辑清晰
+- **Status:** complete
 
 ## Decisions Made
 | Decision | Rationale |
@@ -56,3 +56,16 @@ Phase 2
 - 按走查报告的优先级顺序执行
 - 每个改动完成后编译验证
 - 更新 progress.md 记录每个阶段的详细操作
+
+---
+
+### Phase 5（增补）: ntfy 命令通道 轮询 → 流式订阅
+- [x] `control/ntfy-stream.ts` 新增 `NtfyStreamProvider`（长连接 + 游标 + 看门狗 + 退避 + 熔断 + 去重）
+- [x] `control/ntfy-common.ts` 抽取共享工具（认证头 / URL / 回执发布）
+- [x] `control/ntfy.ts` `NtfyProvider` → `NtfyPollProvider`（保留 `transport: poll` 兜底）
+- [x] `control/types.ts` + `config.ts` 增 `transport` 配置（默认 stream）
+- [x] `control/controller.ts` 工厂按 transport 选择 provider + 启动日志
+- [x] `scripts/control-stream-smoke.ts` mock 冒烟（4 场景）+ 纳入 tsconfig
+- [x] `tsc --noEmit` / 冒烟 / 真实 ntfy 端到端 全部通过
+- [x] 文档：features.md / README.md / yaml.example / config.ts 模板 / AGENTS.md
+- **Status:** complete
