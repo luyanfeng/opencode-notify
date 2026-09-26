@@ -2,3 +2,10 @@ node_modules/
 test-*.ts
 *.log
 config.json
+
+# 会话规划产物（AGENTS.md：非项目文档，不发布）
+.planning/
+plan.md
+task_plan.md
+progress.md
+findings.md
