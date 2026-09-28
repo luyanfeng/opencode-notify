@@ -2,7 +2,33 @@
 
 ## 概述
 
-覆盖所有事件类型的通知输出格式，验证 `route()` → `formatBody()` → `enrich()` 各阶段的输出。
+覆盖所有事件类型的通知输出格式。本文的**所有「期望输出」均从代码取真值**（`events.ts:route()` → `message.ts:formatBody()` → `message.ts:enrich()`），不再是手写推测。
+
+> **格式真值来源（改动格式时以代码为准，并同步本文）**
+>
+> - 标题：`message.ts:formatTitle()` → `opencode - {标签}`；有用户输入时被 `enrich` 换成 `[{输入前16字}] {标签}`
+> - 正文四行固定：`formatBody()` 产出 `事件：「…」` / `会话：…` / `时间：…` / `输入：…`
+> - `enrich` 后处理：把 `输入：` 行内容换成用户输入（截 80），追加 `输出：…` 行（截 500），在 `时间：` 行**之前**插入 `主题：…`
+> - ⚠️ 正文行是 **`输入：`**（承载事件详情），不是 `详情：`
+> - 标签映射 `EVENT_LABELS` / 详情文案 `defaultBody()`：见 `message.ts`
+
+### 标签与详情文案对照表
+
+| 事件 | 标签（`EVENT_LABELS`，进标题） | 详情（`defaultBody()`，进 `事件：「…」`） |
+|---|---|---|
+| `permission_required` | 需要授权 | `Agent 需要您的授权许可`（有表单标题时改为 `需要确认: {标题}`） |
+| `run_completed` | 任务完成 | `任务执行完成` |
+| `run_failed` | 任务失败 | `任务执行失败`（有 `error.message` 时改为 `错误: {消息}`） |
+| `run_cancelled` | 用户取消 | `用户主动中断了任务` |
+
+### 截断规则（两套，别混）
+
+| 位置 | 函数 | 规则 |
+|---|---|---|
+| 事件详情入正文前（表单标题、错误消息） | `events.ts:truncate(s, 200)` | 超 200 字 → 前 **197** 字 + `...`（三个半角点） |
+| 用户输入 | `message.ts:shortTitle(p, 80)` | 超 80 字 → 前 **79** 字 + `…`（单个省略号） |
+| 助手输出 | `message.ts:shortTitle(s, 500)` | 超 500 字 → 前 **499** 字 + `…` |
+| 标题里的输入摘要 | `message.ts:shortTitle(p, 16)` | 超 16 字 → 前 **15** 字 + `…` |
 
 ---
 
@@ -14,7 +40,7 @@
 > 会话 ID 在 `data.form.sessionID`（**不在** `data.sessionID`）。
 
 **输入：**
-```
+```yaml
 type: "form.created"
 data:
   form:
@@ -24,31 +50,33 @@ data:
     fields: [{ key: "q0" }]
 ```
 
-**期望输出（无 sessionTopic）：**
+**期望输出（无 sessionTopic、无用户输入）：**
 ```
-opencode - 需要授权
-事件：需要授权
+标题: opencode - 需要授权
+事件：「需要确认: 要读取文件 /home/lyf/xxx 吗」
 会话：ses_xxx
 时间：{current_time}
-详情：需要确认: 要读取文件 /home/lyf/xxx 吗
+输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 ```
 
-**期望输出（sessionTopic="熟悉项目"）：**
+**期望输出（有 sessionTopic="熟悉项目"）：**
 ```
-[熟悉项目] 需要授权
-事件：需要授权
+标题: opencode - 需要授权
+事件：「需要确认: 要读取文件 /home/lyf/xxx 吗」
 会话：ses_xxx
+输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 主题：熟悉项目
 时间：{current_time}
-详情：需要确认: 要读取文件 /home/lyf/xxx 吗
 ```
+
+⚠️ 注意 `主题：` 插在 `时间：` **之前**（`enrich` 用正则 `替换(时间行)` 实现），不是正文末尾。
 
 ---
 
 ### TC2: `form.created`（无 title）→ `permission_required`
 
 **输入：**
-```
+```yaml
 type: "form.created"
 data:
   form:
@@ -58,12 +86,14 @@ data:
     fields: []
 ```
 
+`title` 为空 → 回退 `defaultBody("permission_required")`（**不是** 省略详情行）。
+
 **期望输出（有 sessionTopic）：**
 ```
-[熟悉项目] 需要授权
-事件：需要授权
+标题: opencode - 需要授权
+事件：「Agent 需要您的授权许可」
 会话：ses_xxx
-详情：Agent 需要您的授权许可
+输入：Agent 需要您的授权许可
 主题：熟悉项目
 时间：{current_time}
 ```
@@ -76,34 +106,36 @@ data:
 > 三者按 `action - message - resources…` 顺序拼接。
 
 **输入：**
-```
+```yaml
 type: "permission.asked"
 data:
   id: "prm_xxx"
   sessionID: "ses_xxx"
   action: "bash"
-  resources: ["ls -la"]
   message: "command"
+  resources: ["ls -la"]
 ```
 
 **期望输出（有 sessionTopic）：**
 ```
-[熟悉项目] 需要授权
-事件：需要授权
+标题: opencode - 需要授权
+事件：「操作「bash - command - ls -la」需要您的授权许可」
 会话：ses_xxx
-详情：操作「bash - command - ls -la」需要您的授权许可
+输入：操作「bash - command - ls -la」需要您的授权许可
 主题：熟悉项目
 时间：{current_time}
 ```
+
+⚠️ 详情本身用直角引号 `「…」` 包裹动作，外层 `事件：` 又用一层 `「…」`，因此是 `事件：「操作「…」需要您的授权许可」` 的嵌套形式（`formatBody` 无条件加外层引号）。
 
 **边界：无 `message` 与 `resources` 时：**
 ```yaml
 action: "bash"
 ```
-期望详情：`操作「bash」需要您的授权许可`
+期望 `输入：` 行：`操作「bash」需要您的授权许可`
 
 **边界：`action` 也缺失时：**
-期望详情：`Agent 需要您的授权许可`（回退 `defaultBody`）
+期望 `输入：` 行：`Agent 需要您的授权许可`（回退 `defaultBody`）
 
 ---
 
@@ -113,7 +145,7 @@ action: "bash"
 > 而是由 `index.ts` 的会话状态机合成（子会话过滤 + 无活跃子会话后才发）。
 
 **输入：**
-```
+```yaml
 type: "session.idle"
 data:
   sessionID: "ses_xxx"
@@ -121,10 +153,10 @@ data:
 
 **期望输出（有 sessionTopic）：**
 ```
-[熟悉项目] 任务完成
-事件：任务完成
+标题: opencode - 任务完成
+事件：「任务执行完成」
 会话：ses_xxx
-详情：Agent 已完成当前任务
+输入：任务执行完成
 主题：熟悉项目
 时间：{current_time}
 ```
@@ -134,7 +166,7 @@ data:
 ### TC5: `session.status`(idle) → 同 TC4
 
 **输入：**
-```
+```yaml
 type: "session.status"
 data:
   sessionID: "ses_xxx"
@@ -145,7 +177,7 @@ data:
 `session.idle` 等价处理）。
 
 **非 idle 状态不应触发通知：**
-```
+```yaml
 type: "session.status"
 data:
   sessionID: "ses_xxx"
@@ -161,7 +193,7 @@ data:
 > （`SessionStructuredError`，不再是 `{name, data:{message}}` 结构）。
 
 **输入：**
-```
+```yaml
 type: "session.execution.failed"
 data:
   sessionID: "ses_xxx"
@@ -170,27 +202,28 @@ data:
 
 **期望输出（有 sessionTopic）：**
 ```
-[熟悉项目] 任务失败
-事件：任务失败
+标题: opencode - 任务失败
+事件：「错误: Rate limit exceeded」
 会话：ses_xxx
-详情：错误: Rate limit exceeded
+输入：错误: Rate limit exceeded
 主题：熟悉项目
 时间：{current_time}
 ```
 
 **边界：长文本截断：**
-`data.message` 超过 200 字 → 截断为 `{前197字}...`
+`data.error.message` 超过 200 字 → `输入：` 行截断为 `{前197字}...`
 
 ---
 
-### TC7: `session.execution.interrupted` → `run_cancelled`
+### TC7: `session.execution.interrupted` → `run_cancelled`（按 reason 过滤）
 
-> V2 原生事件取代 V1 靠 `MessageAbortedError` 名称猜测的做法，无需再判错误名。
-> `data.reason` 取值：`user` / `shutdown` / `superseded` / `inactivity`
-> —— 插件当前**不区分 reason**，四者一律发 `run_cancelled`。
+> V2 原生事件取代 V1 靠 `MessageAbortedError` 名称猜测的做法。
+> `data.reason` 取值 `user` / `shutdown` / `superseded` / `inactivity`，
+> **只有 `user` 发通知**，其余三个静默（且**不降级**为 `run_failed`）。
+> 依据见 `AGENTS.md` 的 run_cancelled 条目。
 
-**输入：**
-```
+**输入（唯一会通知的 reason）：**
+```yaml
 type: "session.execution.interrupted"
 data:
   sessionID: "ses_xxx"
@@ -199,43 +232,60 @@ data:
 
 **期望输出（有 sessionTopic）：**
 ```
-[熟悉项目] 用户取消
-事件：用户取消
+标题: opencode - 用户取消
+事件：「用户主动中断了任务」
 会话：ses_xxx
-详情：用户主动中断了任务
+输入：用户主动中断了任务
 主题：熟悉项目
 时间：{current_time}
 ```
 
+**静默的 reason（期望输出均为 `null`）：**
+
+| `reason` | 为何静默 |
+|---|---|
+| `shutdown` | opencode 关闭/重载；宿主自己就两处特殊排除它（不写 `idle_outcome`、通知走独立分支），此时报"用户取消"是噪音 |
+| `superseded` | 本次执行被更新的执行取代；新执行会自行发完成/失败通知，这里再报一次是重复打扰 |
+| `inactivity` | 空闲超时；V1 时代同样不通知（无对应错误类型） |
+
+`reason` 缺失或为未知值同样**静默**（不猜、不默认当 `user`）。
+
 **`run_cancelled` 未启用时：**
-配置 events 中不含 `run_cancelled` → 返回 `null`，不降级为 `run_failed`
+配置 `events` 中不含 `run_cancelled` → 返回 `null`，不降级为 `run_failed`。
 
 ---
 
 ### TC8: 延迟推送标记
 
-**基准正文（TC1 加上 sessionTopic）：**
+由 `delayed-dispatcher.ts:buildDelayedBody()` 追加到正文**末尾**（先清掉旧的标记段再拼，避免重复累积）。
+
+**基准正文（TC1 加上 sessionTopic，假设 `enrich` 已把时间定为 `2026-06-08 15:48:59`）：**
 ```
-事件：需要授权
+事件：「需要确认: 要读取文件 /home/lyf/xxx 吗」
 会话：ses_xxx
-详情：需要确认: 要读取文件 /home/lyf/xxx 吗
+输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 主题：熟悉项目
 时间：2026-06-08 15:48:59
 ```
 
-**第1次延迟推送：**
+**第2次延迟推送（非最终）：**
 ```
-事件：需要授权
+事件：「需要确认: 要读取文件 /home/lyf/xxx 吗」
 会话：ses_xxx
-详情：需要确认: 要读取文件 /home/lyf/xxx 吗
+输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 主题：熟悉项目
 时间：2026-06-08 15:48:59
 ─────────────────
-⚠️ 延迟 第1/3次（下次约 16:01:00 / 6分钟后）
+⚠️ 延迟 第2/3次（下次约 2分钟后）
 ```
 
-**第3次（最终）延迟推送：**
+**最终次延迟推送：**
 ```
+事件：「需要确认: 要读取文件 /home/lyf/xxx 吗」
+会话：ses_xxx
+输入：需要确认: 要读取文件 /home/lyf/xxx 吗
+主题：熟悉项目
+时间：2026-06-08 15:48:59
 ─────────────────
 ⚠️ 延迟 第3/3次（最终）
 ```
@@ -244,35 +294,72 @@ data:
 
 ### TC9: 无 sessionTopic 时的回退
 
-当 `session.updated` 尚未触发时，`sessionTopic` 为空：
+`sessionTopic` 为空时（尚未收到 `session.created` 的 `data.title`）：
 
 ```
-opencode - 需要授权
-事件：需要授权
+标题: opencode - 需要授权
+事件：「Agent 需要您的授权许可」
 会话：ses_xxx
-详情：Agent 需要您的授权许可
 时间：{current_time}
+输入：Agent 需要您的授权许可
 ```
 
-标题保持 `opencode - {标签}`，正文保持 `详情` 行。
+标题保持 `opencode - {标签}`，正文**不出现** `主题：` 行。
 
 ---
 
 ### TC10: text 超过 200 字截断
 
-输入 text 为 300 字时，event detail 截断到 200 字：
+输入 text 为 300 字时，事件详情在**入正文前**被 `truncate(text, 200)` 截断：
+
 ```
-详情：{前197字}...
+输入：{前197字}...
+```
+
+注意是半角 `...`（三个点），与用户输入/助手输出的单字符 `…` 不同。
+
+---
+
+### TC11: `enrich` 的标题与输出行
+
+这是 `enrich` 的两项独立增强（`route()` 本身不产这两项）：
+
+**有用户输入时**（`userPrompt` 来自 `session.inbox.enqueued`）：
+- 标题从 `opencode - 需要授权` 换成 `[{输入前15字}…] 需要授权`（截 16）
+- `输入：` 行内容**被替换**为用户输入（截 80）——注意是替换，事件详情因此不再出现在正文里
+
+**有助手输出时**（`assistantSummary` 来自 `session.text.delta` 累积）：
+- 正文末尾追加 `输出：{摘要}`（截 500）
+
+**两者都有时的完整形态：**
+```
+标题: [帮我看看这个报错] 任务完成
+事件：「任务执行完成」
+会话：ses_xxx
+输入：帮我看看这个报错 /home/lyf/proj/src/index.ts 里的 connect 函数
+输出：已定位到 connect 的超时设置缺失，改为可配置项…
+主题：熟悉项目
+时间：{current_time}
 ```
 
 ---
 
 ## 验证方式
 
-```bash
-# 方式1：编写测试脚本
-bun run scripts/test-format.ts
+事件映射层已用冒烟脚本**持续回归**（`route()` 的输出 + reason 过滤 + 开关过滤）：
 
-# 方式2：使用 CLI 工具发送测试通知
-bun run cli.ts test
+```bash
+bun scripts/events-route-smoke.ts
 ```
+
+其余通道的实发效果：
+
+```bash
+# 用 CLI 发送测试通知（会真的推手机/桌面）
+bun cli.ts test [channel]
+
+# 诊断配置与各渠道连通性
+bun cli.ts check
+```
+
+> `test` 的渠道名取**配置键**：`system_message` / `wechat_work` / `feishu` / `custom_webhook`。

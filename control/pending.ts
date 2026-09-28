@@ -102,27 +102,6 @@ export class PendingRegistry {
     return this.items.splice(idx, 1)[0]
   }
 
-  /** 按 #序号 查找（1 = 最近一条） */
-  getByIndex(indexToken: string): PendingItem | undefined {
-    const m = /^#(\d+)$/.exec(indexToken)
-    if (!m) return undefined
-    const n = Number(m[1])
-    if (!Number.isInteger(n) || n < 1) return undefined
-    const sorted = this.list()
-    return sorted[n - 1]
-  }
-
-  /** 同一类别的待处理条目（最近插入的在前） */
-  listByKind(kind: PendingItem["kind"]): PendingItem[] {
-    return this.list().filter((i) => i.kind === kind)
-  }
-
-  /** 最近一条待处理（最新插入的一条） */
-  getMostRecent(): PendingItem | undefined {
-    this.prune()
-    return this.items[this.items.length - 1]
-  }
-
   /** 列表（最近插入的在前）— 以插入顺序为准，避免同毫秒时间戳排序不稳定 */
   list(): PendingItem[] {
     this.prune()

@@ -219,7 +219,7 @@ export class DelayedDispatcher {
    * 清除正文末尾已有的旧标记行，追加最新标记。
    * 标记格式：
    *   ─────────────────
-   *   ⚠️ 延迟 第2/3次（下次约 15:31:00 / 2分钟后）
+   *   ⚠️ 延迟 第2/3次（下次约 2分钟后）
    */
   private markDelayBody(body: string, current: number, total: number, nextDelayMs: number): string {
     // 移除旧标记（从末尾 ─── 分隔线到最后）

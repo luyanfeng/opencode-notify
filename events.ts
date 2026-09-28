@@ -3,12 +3,29 @@
 // 这里直接使用 any 避免对 opencode 内部类型的耦合。
 import type { Message } from "./message.js"
 import { formatTitle, formatBody, defaultBody } from "./message.js"
+import { debug } from "./log.js"
 
 /** V2 事件形状（结构化类型见 .planning/2026-09-28-oc2-migration/plan.md 的事件映射表） */
 export interface V2Event {
   type: string
   data?: Record<string, unknown>
 }
+
+/**
+ * `session.execution.interrupted` 中**需要发 run_cancelled 通知**的 reason
+ *
+ * reason 取值（V2 `SessionExecutionInterrupted`）与各自的处理：
+ * - `user`       用户按中断/Ctrl+C（宿主结算里对应 `AbortError`）——用户唯一主动取消，
+ *                与 V1 的 `MessageAbortedError` 口径一致，**通知**
+ * - `shutdown`   opencode 关闭/重载。宿主自己就两处特殊排除它（不写 `idle_outcome`、
+ *                通知走独立分支），此时发"用户取消"纯属噪音 —— **静默**
+ * - `superseded` 本次执行被更新的执行取代。新的执行会自行发出完成/失败通知，
+ *                这里再报一次"取消"是重复打扰 —— **静默**
+ * - `inactivity` 空闲超时。V1 时代同样不通知（无对应错误类型）—— **静默**
+ *
+ * 注意：静默是**不通知**，绝不降级成 `run_failed`。
+ */
+const NOTIFIABLE_INTERRUPT_REASONS = new Set(["user"])
 
 /**
  * 将 opencode V2 事件映射为内部通知 Message
@@ -81,12 +98,17 @@ export function route(
   }
 
   // session.execution.interrupted → run_cancelled（V1 靠 session.error 里的
-  // MessageAbortedError 判定，V2 有原生事件，无需再猜错误名）
+  // MessageAbortedError 判定，V2 有原生事件且带 reason，无需再猜错误名）
   if (type === "session.execution.interrupted") {
-    if (enabled.has("run_cancelled")) {
-      return makeMsg("run_cancelled", defaultBody("run_cancelled"))
+    if (!enabled.has("run_cancelled")) return null
+    // 只对"用户主动中断"通知；shutdown/superseded/inactivity 各有静默理由，
+    // 详见 NOTIFIABLE_INTERRUPT_REASONS 的逐项说明
+    const reason = String(data.reason ?? "")
+    if (!NOTIFIABLE_INTERRUPT_REASONS.has(reason)) {
+      debug(`events: session.execution.interrupted reason=${reason || "(缺失)"} 非用户主动中断，不发 run_cancelled`)
+      return null
     }
-    return null
+    return makeMsg("run_cancelled", defaultBody("run_cancelled"))
   }
 
   // session.execution.failed → run_failed
