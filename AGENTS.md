@@ -45,6 +45,7 @@ opencode 通知插件（TypeScript，运行于 Bun）。监听 opencode 会话�
 - **事件路由**：`events.ts:route()` 把 opencode 事件映射为内部 `Message`；`message.ts` 负责格式化（`formatBody`/`enrich`）；`index.ts` 组装发送器和会话追踪。
 - 不要删除/改动仓库根目录的 `config.json`（那是本仓库的 opencode agent 模型配置，已被 gitignore，非插件配置）。
 - 插件配置是 YAML，模板见 `opencode-notify.yaml.example`，运行时配置在 `~/.config/opencode/opencode-notify.yaml`。优先级：YAML > plugin options > 默认值。
+- **⚠️ 部署坑：opencode 2.x 的 `plugin` 数组不再接受 `file://` 单文件，必须写目录**。V1 时代的 `"file:///…/opencode-notify/index.ts"` 在 2.x 下**只会打一条 `configured plugin path must be a directory` 的 WARN 然后静默跳过 —— 插件根本不加载，所有通知/远程控制全部失效，且没有任何报错**。正确写法是去掉文件名、指向插件目录（宿主按 `package.json` 的 `main`/`exports` 解析入口，本仓库两者都已具备）。判定方法：`~/.local/share/opencode/log/opencode.log` 里搜 `msg="loading plugin" id=…opencode-notify` —— **没有这行就是没加载**（WARN 不能作为判据，`~/.config/opencode/plugins/*.ts` 里的文件同样会 WARN 但通过自动扫描正常加载）。改完必须重启 `opencode serve` 才生效（插件只在 server 启动时加载）。
 - `config.ts` 里 `resolveConfig/mergeConfig/loadYamlConfig` 的合并逻辑是配置行为的核心。
 
 ## 架构速览

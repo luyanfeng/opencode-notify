@@ -2,14 +2,31 @@
 
 ## 概述
 
-覆盖所有事件类型的通知输出格式。本文的**所有「期望输出」均从代码取真值**（`events.ts:route()` → `message.ts:formatBody()` → `message.ts:enrich()`），不再是手写推测。
+覆盖所有事件类型的通知输出格式。本文的**所有「期望输出」均已与 ntfy 服务端的真实消息逐字比对**（拉取 `/{topic}/json?poll=1` 历史消息核对），不是手写推测。
 
 > **格式真值来源（改动格式时以代码为准，并同步本文）**
 >
-> - 标题：`message.ts:formatTitle()` → `opencode - {标签}`；有用户输入时被 `enrich` 换成 `[{输入前16字}] {标签}`
-> - 正文四行固定：`formatBody()` 产出 `事件：「…」` / `会话：…` / `时间：…` / `输入：…`
-> - `enrich` 后处理：把 `输入：` 行内容换成用户输入（截 80），追加 `输出：…` 行（截 500），在 `时间：` 行**之前**插入 `主题：…`
+> - 标题：`message.ts:formatTitle()` → `opencode - {标签}`；有用户输入时被 `enrich` 换成 `[{输入前15字}…] {标签}`
+> - 正文基础四行由 `formatBody()` 产出（顺序固定）：
+>   `事件：「…」` → `会话：…` → `时间：…` → `输入：…`
+> - `enrich()` 按此顺序后处理：
+>   1. 有用户输入 → **替换** `输入：` 行内容（截 80）
+>   2. 有助手输出 → **末尾追加** `输出：…` 行（截 500）
+>   3. 有会话主题 → 在 `时间：` 行**之前**插入 `主题：…`
+>
+> 由此得到最终行序（**有主题 + 有输出**时最完整）：
+>
+> ```
+> 事件：「…」
+> 会话：…
+> 主题：…
+> 时间：…
+> 输入：…
+> 输出：…
+> ```
+>
 > - ⚠️ 正文行是 **`输入：`**（承载事件详情），不是 `详情：`
+> - ⚠️ `主题：` 在 `时间：` **之前**（`enrich` 用正则替换时间行实现），不是正文末尾
 > - 标签映射 `EVENT_LABELS` / 详情文案 `defaultBody()`：见 `message.ts`
 
 ### 标签与详情文案对照表
@@ -64,12 +81,10 @@ data:
 标题: opencode - 需要授权
 事件：「需要确认: 要读取文件 /home/lyf/xxx 吗」
 会话：ses_xxx
-输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 主题：熟悉项目
 时间：{current_time}
+输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 ```
-
-⚠️ 注意 `主题：` 插在 `时间：` **之前**（`enrich` 用正则 `替换(时间行)` 实现），不是正文末尾。
 
 ---
 
@@ -86,16 +101,16 @@ data:
     fields: []
 ```
 
-`title` 为空 → 回退 `defaultBody("permission_required")`（**不是** 省略详情行）。
+`title` 为空 → 回退 `defaultBody("permission_required")`（**不是**省略详情行）。
 
 **期望输出（有 sessionTopic）：**
 ```
 标题: opencode - 需要授权
 事件：「Agent 需要您的授权许可」
 会话：ses_xxx
-输入：Agent 需要您的授权许可
 主题：熟悉项目
 时间：{current_time}
+输入：Agent 需要您的授权许可
 ```
 
 ---
@@ -121,9 +136,9 @@ data:
 标题: opencode - 需要授权
 事件：「操作「bash - command - ls -la」需要您的授权许可」
 会话：ses_xxx
-输入：操作「bash - command - ls -la」需要您的授权许可
 主题：熟悉项目
 时间：{current_time}
+输入：操作「bash - command - ls -la」需要您的授权许可
 ```
 
 ⚠️ 详情本身用直角引号 `「…」` 包裹动作，外层 `事件：` 又用一层 `「…」`，因此是 `事件：「操作「…」需要您的授权许可」` 的嵌套形式（`formatBody` 无条件加外层引号）。
@@ -156,9 +171,9 @@ data:
 标题: opencode - 任务完成
 事件：「任务执行完成」
 会话：ses_xxx
-输入：任务执行完成
 主题：熟悉项目
 时间：{current_time}
+输入：任务执行完成
 ```
 
 ---
@@ -172,6 +187,9 @@ data:
   sessionID: "ses_xxx"
   status: { type: "idle" }
 ```
+
+`SessionStatus` 是可辨识联合（`{type:"idle"}` / `{type:"retry",…}` / `{type:"busy"}`），
+所以读 `data.status.type` 是对的。
 
 **期望输出：** 与 TC4 相同（`index.ts` 把 `session.status.type==="idle"` 与
 `session.idle` 等价处理）。
@@ -205,9 +223,9 @@ data:
 标题: opencode - 任务失败
 事件：「错误: Rate limit exceeded」
 会话：ses_xxx
-输入：错误: Rate limit exceeded
 主题：熟悉项目
 时间：{current_time}
+输入：错误: Rate limit exceeded
 ```
 
 **边界：长文本截断：**
@@ -235,9 +253,9 @@ data:
 标题: opencode - 用户取消
 事件：「用户主动中断了任务」
 会话：ses_xxx
-输入：用户主动中断了任务
 主题：熟悉项目
 时间：{current_time}
+输入：用户主动中断了任务
 ```
 
 **静默的 reason（期望输出均为 `null`）：**
@@ -257,24 +275,24 @@ data:
 
 ### TC8: 延迟推送标记
 
-由 `delayed-dispatcher.ts:buildDelayedBody()` 追加到正文**末尾**（先清掉旧的标记段再拼，避免重复累积）。
+由 `delayed-dispatcher.ts:markDelayBody()` 追加到正文**末尾**（先清掉旧的标记段再拼，避免重复累积）。
 
 **基准正文（TC1 加上 sessionTopic，假设 `enrich` 已把时间定为 `2026-06-08 15:48:59`）：**
 ```
 事件：「需要确认: 要读取文件 /home/lyf/xxx 吗」
 会话：ses_xxx
-输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 主题：熟悉项目
 时间：2026-06-08 15:48:59
+输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 ```
 
 **第2次延迟推送（非最终）：**
 ```
 事件：「需要确认: 要读取文件 /home/lyf/xxx 吗」
 会话：ses_xxx
-输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 主题：熟悉项目
 时间：2026-06-08 15:48:59
+输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 ─────────────────
 ⚠️ 延迟 第2/3次（下次约 2分钟后）
 ```
@@ -283,18 +301,20 @@ data:
 ```
 事件：「需要确认: 要读取文件 /home/lyf/xxx 吗」
 会话：ses_xxx
-输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 主题：熟悉项目
 时间：2026-06-08 15:48:59
+输入：需要确认: 要读取文件 /home/lyf/xxx 吗
 ─────────────────
 ⚠️ 延迟 第3/3次（最终）
 ```
+
+> 间隔文案由 `formatInterval()` 产出：`<60s` → `"N秒"`，否则 `"N分钟"`（四舍五入）。
 
 ---
 
 ### TC9: 无 sessionTopic 时的回退
 
-`sessionTopic` 为空时（尚未收到 `session.created` 的 `data.title`）：
+`sessionTopic` 为空时（尚未收到 `session.created` / `session.renamed` 的标题）：
 
 ```
 标题: opencode - 需要授权
@@ -331,16 +351,52 @@ data:
 **有助手输出时**（`assistantSummary` 来自 `session.text.delta` 累积）：
 - 正文末尾追加 `输出：{摘要}`（截 500）
 
-**两者都有时的完整形态：**
+**两者都有时的完整形态**（与 ntfy 真实消息一致）：
 ```
 标题: [帮我看看这个报错] 任务完成
 事件：「任务执行完成」
 会话：ses_xxx
-输入：帮我看看这个报错 /home/lyf/proj/src/index.ts 里的 connect 函数
-输出：已定位到 connect 的超时设置缺失，改为可配置项…
 主题：熟悉项目
 时间：{current_time}
+输入：帮我看看这个报错 /home/lyf/proj/src/index.ts 里的 connect 函数
+输出：已定位到 connect 的超时设置缺失，改为可配置项…
 ```
+
+---
+
+### TC12: 远程控制附注（仅 ntfy 渠道）
+
+`index.ts` 对**每条**通知追加会话码，权限/表单额外追加令牌与按钮提示。
+这些行直接跟在 `输出：` 行之后（**插件不加分隔空行**；若看到空行，那是助手输出内容
+自身以换行结尾造成的，不是格式的一部分）。
+
+**完成类通知（`run_completed` 等）** —— 注册 session 型凭证：
+```
+输出：v0.1.2 构建已触发（`36375511201`）。依赖集变化…等完成：
+会话码：sc-39cb
+📱 回复: say <令牌> 文本=继续 · stop <令牌>=中断 · status <令牌>=状态
+```
+
+**权限/提问通知** —— 多一行 `令牌：`，命令提示更短：
+```
+输入：现在看个新问题：服务端使用nginx 代理后 websocket要如何配置
+输出：先查清项目实际暴露的 WebSocket 端点和 SSE 长连接路径 —— 配置必须对具体路径生效，不能给通用模板。
+令牌：oc-4e12-200c86
+会话码：sc-0e92
+📱 回复: approve/deny/always <令牌>
+```
+
+ntfy 通知的 `actions` 按钮（≤3 个，服务端硬限）：
+
+| 场景 | 按钮 |
+|---|---|
+| 权限 | `[允许]` `[始终允许]` `[拒绝]`（均为 http，回 POST topic） |
+| 提问 ≤2 选项 | `[选项]` `[选项]` `[复制]` |
+| 提问 ≥3 选项 / 0 选项 | `[复制]` |
+| 完成类 | `[复制续接命令]`（copy，带尾空格）`[状态]`（http） |
+
+> 提问类按钮在 opencode 2.x 下**必然失败**（插件 ctx 无 form 域，见 `AGENTS.md`），
+> 点按后回执会写明原因且**不消费令牌**。权限按钮走 `ctx.permission.reply`，不受影响。
 
 ---
 
@@ -350,6 +406,15 @@ data:
 
 ```bash
 bun scripts/events-route-smoke.ts
+```
+
+**核对真机格式**（拉 ntfy 服务端的历史消息与本文逐字比对）：
+
+```bash
+# 注意端点必须是 /{topic}/json；/json 会返回 HTML 页面而不是消息流，
+# 且无 token 时 403。since 参数用 10m/1h/1d 这种单位。
+curl -sN -H "Authorization: Bearer <token>" \
+  "https://<server>/<topic>/json?poll=1&since=1d" | jq -r 'select(.event=="message") | .message'
 ```
 
 其余通道的实发效果：
