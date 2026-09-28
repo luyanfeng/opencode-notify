@@ -1,6 +1,4 @@
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
-import type { OpencodeClient as V2Client } from "@opencode-ai/sdk/v2/client"
-import type { ReplyConfig, Command, PendingItem, ControlButton, RawCommandMessage } from "./types.js"
+import type { ReplyConfig, Command, PendingItem, ControlButton, RawCommandMessage, OpencodeBridge } from "./types.js"
 import { parseCommand, HELP_TEXT, isItemToken } from "./parser.js"
 import { PendingRegistry } from "./pending.js"
 import { SessionCodes } from "./sessions.js"
@@ -17,60 +15,24 @@ const RECEIPT_WINDOW_MS = 10_000
 const RECEIPT_BURST = 8
 
 /**
- * 从 opencode 注入的 v1 client 中提取底层 fetch / headers，构造可用的 v2 client。
- *
- * 背景：opencode 注入的 `PluginInput.client` 是 **v1** 客户端（无 permission/question
- * 命名空间，无法用于远程应答）。直跑模式（`opencode` 非 server）下服务运行在同一进程内、
- * 不监听 HTTP 端口，注入 client 内部用的是**内存 fetch**（`Server.Default().app.fetch`）；
- * 若按 `serverUrl` 自建 client 会连到不可用的 `http://localhost:4096` 导致应答失败。
- *
- * v1 client 内部的 `_client.getConfig()` 返回构造时的配置（含 fetch 与 headers），
- * 这里把它们复用到 v2 client 上，保证直跑模式走内存通道、server 模式走认证网络通道。
- *
- * 提取失败时返回 undefined，由调用方回退为按 serverUrl 自建。
- */
-function buildV2Client(injected: unknown, serverUrl: string, directory: string): V2Client | undefined {
-  const cfg = (injected as { _client?: { getConfig?: () => { fetch?: typeof fetch; headers?: unknown } } } | undefined)
-    ?._client
-    ?.getConfig?.()
-  const fetchImpl = cfg?.fetch
-  if (typeof fetchImpl !== "function") return undefined
-  // v2 client 内部对 headers 做对象展开（{ ...headers }），Headers 实例展开会丢失条目，
-  // 因此这里先归一化为普通对象，避免丢掉 ServerAuth 认证头。
-  const headers = normalizeHeaders(cfg?.headers)
-  return createOpencodeClient({
-    baseUrl: serverUrl,
-    directory,
-    fetch: fetchImpl,
-    ...(headers ? { headers } : {}),
-  })
-}
-
-/** 将 Headers 实例 / 普通对象统一归一化为 string 记录，便于安全展开传递 */
-function normalizeHeaders(headers: unknown): Record<string, string> | undefined {
-  if (!headers) return undefined
-  if (headers instanceof Headers) return Object.fromEntries(headers.entries())
-  if (Array.isArray(headers)) return Object.fromEntries(headers as Array<[string, string]>)
-  if (typeof headers === "object") return headers as Record<string, string>
-  return undefined
-}
-
-/**
  * 远程控制控制器
  *
  * 职责：
  *   - 依据配置创建 Gotify / ntfy 命令通道并启动轮询
- *   - 解析手机命令并调用 opencode 本地 API 执行
+ *   - 解析手机命令并经 `bridge` 调用 opencode 宿主能力执行
  *       approve/always/deny → permission.reply
- *       answer              → question.reply
- *       say                 → session.prompt（注入用户指令）
- *       stop                → session.abort
- *       status/help         → 回执状态与帮助
+ *       answer/select        → session.form.reply（V2 取代 V1 的 question.reply）
+ *       say                  → session.prompt（注入用户指令）
+ *       stop                 → session.interrupt（V2 由 abort 改名）
+ *       status/help          → 回执状态与帮助
  *   - 维护待处理请求注册表（一次性令牌关联与会话码）
  *   - 生成通知按钮定义（ntfy Actions）
  *   - （可选）向通道发布执行回执
  *
  * 全部为出站连接：不监听任何端口。
+ *
+ * 宿主能力经 `OpencodeBridge` 窄接口注入（V1 时代是"从注入 client 提取 fetch/headers
+ * 自建 SDK client"，V2 插件 ctx 直接给 `ctx.permission` / `ctx.session` 域，无需自建）。
  *
  * 多进程隔离：令牌带**本进程实例前缀**。其它进程读到不匹配的令牌时静默忽略，
  * 从而保证同一条按钮命令只被拥有该令牌的进程执行一次。
@@ -78,34 +40,19 @@ function normalizeHeaders(headers: unknown): Record<string, string> | undefined 
 export class ControlController {
   readonly registry: PendingRegistry
   readonly sessionCodes = new SessionCodes()
-  private client: V2Client
+  private readonly bridge: OpencodeBridge
   private provider?: import("./types.js").CommandProvider
   private readonly instance = newInstanceId()
   private started = false
   /** 近期回执时间戳（限流用） */
   private receiptTimes: number[] = []
 
-  private readonly clientSource: "injected" | "self"
-
   constructor(
     private readonly config: ReplyConfig,
-    serverUrl: string,
-    directory: string,
-    injectedClient?: unknown,
+    bridge: OpencodeBridge,
   ) {
     this.registry = new PendingRegistry(config.maxPending, this.instance, config.tokenTtlMs)
-    // opencode 注入的 client 是 v1 客户端（无 permission/question 命名空间），不能直接使用。
-    // 但其内部持有构造时的 fetch / headers：直跑模式下是内存 fetch（Server.Default().app.fetch），
-    // 认证头为 ServerAuth.headers()。把它们提取出来构造 v2 client，即可在直跑模式下正确应答。
-    const v2 = buildV2Client(injectedClient, serverUrl, directory)
-    if (v2) {
-      this.client = v2
-      this.clientSource = "injected"
-    } else {
-      warn("control: 未能从 opencode 注入的 client 提取 fetch，回退为按 serverUrl 自建（server 模式可用；直跑模式将连不上本地服务）")
-      this.client = createOpencodeClient({ baseUrl: serverUrl, directory })
-      this.clientSource = "self"
-    }
+    this.bridge = bridge
   }
 
   start(): void {
@@ -118,7 +65,7 @@ export class ControlController {
     }
     this.provider.start(this.config.pollIntervalMs, (m) => void this.onRawMessage(m))
     const transport = this.config.provider === "ntfy" ? ` transport=${this.config.transport ?? "stream"}${this.config.merged ? " merged" : ""}` : ""
-    info(`control: 命令通道已启动 provider=${this.config.provider}${transport} 间隔=${this.config.pollIntervalMs}ms 实例=${this.instance} client=${this.clientSource}`)
+    info(`control: 命令通道已启动 provider=${this.config.provider}${transport} 间隔=${this.config.pollIntervalMs}ms 实例=${this.instance}`)
   }
 
   stop(): void {
@@ -134,8 +81,9 @@ export class ControlController {
     sessionID: string,
     title: string,
     options?: string[],
+    formExtra?: Pick<PendingItem, "answerKey" | "optionValues">,
   ): PendingItem {
-    return this.registry.add(kind, requestID, sessionID, title, options)
+    return this.registry.add(kind, requestID, sessionID, title, options, formExtra)
   }
 
   /** 回复后清理对应待处理条目 */
@@ -182,13 +130,16 @@ export class ControlController {
     }
 
     const opts = item.options ?? []
+    // 按钮点按提交的必须是 form 的**回传值**（option.value），显示用 label。
+    // 两者相同时行为与旧 question 一致；不同时必须用 value，否则宿主匹配不到选项。
+    const valueOf = (i: number): string => item.optionValues?.[i] ?? opts[i]
     // 复制模板给 select（选选项的标准动词）；自由文本回答用选项按钮或手打 answer
     const copy: ControlButton = { label: "复制选择命令", value: `select ${item.code} ` }
     // 合并模式（启用复制按钮）：优先 [复制]（粘贴后补写，无需手打令牌）
     if (this.config.copyButton) {
       // 选项 ≤2：选项按钮 + 复制（≤3 个）
       if (opts.length > 0 && opts.length <= 2) {
-        const btns: ControlButton[] = opts.map((label) => ({ label, body: `answer ${item.code} ${label}` }))
+        const btns: ControlButton[] = opts.map((label, i) => ({ label, body: `answer ${item.code} ${valueOf(i)}` }))
         btns.push(copy)
         return btns.slice(0, 3)
       }
@@ -196,7 +147,7 @@ export class ControlController {
       return [copy]
     }
     // 分离模式（无复制按钮）：保留旧行为——最多 3 个选项按钮
-    return opts.slice(0, 3).map((label) => ({ label, body: `answer ${item.code} ${label}` }))
+    return opts.slice(0, 3).map((label, i) => ({ label, body: `answer ${item.code} ${valueOf(i)}` }))
   }
 
   /**
@@ -313,6 +264,26 @@ export class ControlController {
   }
 
   /**
+   * 调用宿主能力并把失败归一为错误文本。
+   *
+   * V2 的 ctx 域方法失败会 reject（不像 V1 SDK 那样返回 `{ error }`），
+   * 这里统一 catch → 返回错误描述，由调用方拼进回执文案；
+   * 同时 warn 落日志，保证出错可被发现而不是被静默吞掉。
+   *
+   * @returns 成功返回 undefined；失败返回错误描述
+   */
+  private async callBridge(fn: () => Promise<void>): Promise<string | undefined> {
+    try {
+      await fn()
+      return undefined
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      warn(`control: 宿主能力调用失败: ${msg}`)
+      return msg
+    }
+  }
+
+  /**
    * 执行命令（凭证强制协议）。
    *
    * 入口已由 onRawMessage 完成**凭证门卫**：`item` 即令牌对应的本实例条目。
@@ -326,54 +297,81 @@ export class ControlController {
       case "always":
       case "deny": {
         if (item.kind !== "permission") return null // 凭证与动作不符 → 静默
-        const reply = cmd.action === "approve" ? "once" : cmd.action === "always" ? "always" : "reject"
-        const res = await this.client.permission.reply({ requestID: item.requestID, reply })
+        const decision = cmd.action === "approve" ? "once" : cmd.action === "always" ? "always" : "reject"
+        const err = await this.callBridge(
+          () => this.bridge.replyPermission({
+            sessionID: item.sessionID,
+            requestID: item.requestID,
+            decision,
+          }),
+        )
+        const prefix = decision === "reject" ? "已拒绝" : "已允许"
+        // 失败不消费令牌：动作没有生效，令牌留着（TTL 内可重试）
+        if (err) return `${prefix} ${item.code} 失败（令牌未消费）：${err}`
         this.registry.removeByCode(item.code) // 一次性：动作完成即销毁
-        return `${reply === "reject" ? "已拒绝" : "已允许"} ${item.code}${res.error ? " (服务返回错误)" : ""}`
+        return `${prefix} ${item.code}`
       }
       case "answer": {
-        if (item.kind !== "question") return null
+        if (item.kind !== "form") return null
         const answerText = cmd.text.trim()
         if (!answerText) return "缺少回答内容"
-        const listRes = await this.client.question.list({})
-        const q = (listRes.data ?? []).find((x) => x.id === item.requestID)
-        const count = q?.questions?.length ?? 1
-        // 答案按问题顺序；首问填文本，其余留空（API 要求数组长度一致）
-        const answers = Array.from({ length: count }, (_, i) => (i === 0 ? [answerText] : []))
-        const res = await this.client.question.reply({ requestID: item.requestID, answers })
+        const err = await this.callBridge(
+          () => this.bridge.replyForm({
+            sessionID: item.sessionID,
+            formID: item.requestID,
+            answer: { [item.answerKey ?? "q0"]: answerText },
+          }),
+        )
+        // 失败不消费令牌：动作没有生效，令牌留着（TTL 内可重试）
+        if (err) return `应答失败 ${item.code}（令牌未消费）：${err}`
         this.registry.removeByCode(item.code) // 一次性
-        return `已回答 ${item.code}${res.error ? " (服务返回错误)" : ""}`
+        return `已回答 ${item.code}`
       }
       case "choose": {
-        if (item.kind !== "question") return null
+        if (item.kind !== "form") return null
         const opts = item.options ?? []
         if (opts.length === 0) return null
         if (!Number.isInteger(cmd.index) || cmd.index < 1 || cmd.index > opts.length) {
           return `选项序号超出范围（该提问共 ${opts.length} 个选项），令牌未消费可重试`
         }
         const chosen = opts[cmd.index - 1]
-        const listRes = await this.client.question.list({})
-        const q = (listRes.data ?? []).find((x) => x.id === item.requestID)
-        const count = q?.questions?.length ?? 1
-        const answers = Array.from({ length: count }, (_, i) => (i === 0 ? [chosen] : []))
-        const res = await this.client.question.reply({ requestID: item.requestID, answers })
+        // 显示文本（options[i]）与回传值（optionValues[i]）可能不同，回传必须用后者
+        const chosenValue = item.optionValues?.[cmd.index - 1]
+        if (chosenValue === undefined) {
+          warn(`control: form ${item.requestID} 的选项 ${cmd.index} 缺少回传值，无法应答（令牌未消费）`)
+          return `选项 ${cmd.index} 缺少回传值，无法应答，令牌未消费可重试`
+        }
+        const err = await this.callBridge(
+          () => this.bridge.replyForm({
+            sessionID: item.sessionID,
+            formID: item.requestID,
+            answer: { [item.answerKey ?? "q0"]: chosenValue },
+          }),
+        )
+        // 失败不消费令牌（同 answer 分支）
+        if (err) return `应答失败 ${item.code}：${chosen}（令牌未消费）：${err}`
         this.registry.removeByCode(item.code) // 一次性
-        return `已回答 ${item.code}：${chosen}${res.error ? " (服务返回错误)" : ""}`
+        return `已回答 ${item.code}：${chosen}`
       }
       case "say": {
         if (item.kind !== "session") return null
         if (!cmd.text.trim()) return "缺少指令内容"
-        await this.client.session.prompt({
-          sessionID: item.sessionID,
-          parts: [{ type: "text", text: cmd.text }],
-        })
+        const err = await this.callBridge(
+          () => this.bridge.prompt({ sessionID: item.sessionID, text: cmd.text }),
+        )
         // 续接凭证 TTL 内可复用（不移除），过期由 prune 清理
-        return `已向会话 ${item.sessionID.slice(0, 8)}… 追加指令`
+        return err
+          ? `向会话 ${item.sessionID.slice(0, 8)}… 追加指令失败: ${err}`
+          : `已向会话 ${item.sessionID.slice(0, 8)}… 追加指令`
       }
       case "stop": {
         if (item.kind !== "session") return null
-        await this.client.session.abort({ sessionID: item.sessionID })
-        return `已中断会话 ${item.sessionID.slice(0, 8)}…`
+        const err = await this.callBridge(
+          () => this.bridge.interrupt({ sessionID: item.sessionID }),
+        )
+        return err
+          ? `中断会话 ${item.sessionID.slice(0, 8)}… 失败: ${err}`
+          : `已中断会话 ${item.sessionID.slice(0, 8)}…`
       }
       case "status": {
         // 只读查询：验证不消费（门卫已验证归属）。session 型也不消费。

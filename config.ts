@@ -395,14 +395,14 @@ channels:
 #    即使渠道配了 run_cancelled 也不会收到。
 #
 # 可选事件（各渠道也可单独配置 events，从全局列表中进一步筛选）:
-#   permission_required  - Agent 需要用户授权（如执行命令、读写文件）
-#                          触发: permission.asked / question.asked
+#   permission_required  - Agent 需要用户授权（如执行命令、读写文件）或向你提问
+#                          触发: permission.asked / form.created
 #   run_completed        - Agent 完成一段工作（等待用户输入前）
 #                          触发: 会话状态机（所有会话 idle 时）
 #   run_failed           - 任务执行失败
-#                          触发: session.error
+#                          触发: session.execution.failed
 #   run_cancelled        - 用户主动中断任务（Ctrl+C 或点击中断按钮）
-#                          触发: session.error (MessageAbortedError)
+#                          触发: session.execution.interrupted
 #   input_required       - （已废弃）保留仅配置兼容，不再触发通知
 # ---------------------------------------------------------------------------
 events:
@@ -430,11 +430,10 @@ dedupe_seconds: 60                   # 去重时间窗口（秒），0 或负数
 # 只对活跃会话按事件类型选择性过滤。
 #
 # 检测的用户活跃事件:
-#   message.updated      - 用户发送了消息
-#   permission.replied   - 用户回应了授权
-#   question.replied     - 用户回答了问题
-#   command.executed     - 用户执行了命令
-#   tui.command.execute  - 用户按键操作 TUI
+#   session.inbox.enqueued - 用户发送了消息
+#   permission.replied     - 用户回应了授权
+#   form.replied           - 用户回答了提问
+#   tui.command.execute    - 用户按键操作 TUI
 #
 # 抑制规则:
 #   permission_required: 活跃时抑制（屏上可见）

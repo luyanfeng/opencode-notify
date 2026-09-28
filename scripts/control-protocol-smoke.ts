@@ -17,7 +17,7 @@ import { SessionCodes } from "../control/sessions.js"
 import { PendingRegistry } from "../control/pending.js"
 import { isSelfMessage, RECEIPT_TITLE } from "../control/ntfy-common.js"
 import { configureLog } from "../log.js"
-import type { ReplyConfig } from "../control/types.js"
+import type { ReplyConfig, OpencodeBridge } from "../control/types.js"
 import type { PluginConfig } from "../config.js"
 
 configureLog("off")
@@ -146,7 +146,14 @@ function mkController(copyButton = true): ControlController {
     botTag: "opencode",
     copyButton,
   }
-  return new ControlController(reply, "http://localhost:4096", "/tmp")
+  // 按钮编排测试不触达宿主，用一个"永不生效"的空桥接即可
+  const bridge: OpencodeBridge = {
+    replyPermission: async () => {},
+    replyForm: async () => {},
+    prompt: async () => {},
+    interrupt: async () => {},
+  }
+  return new ControlController(reply, bridge)
 }
 
 function testButtons() {
@@ -159,12 +166,14 @@ function testButtons() {
   assert(permBtns.length === 3, `权限 3 个按钮（实际 ${permBtns.length}）`)
   assert(permBtns.every((b) => b.body?.includes(perm.code)), "权限按钮 body 均携带该条令牌")
 
-  const q2 = ctl.registerPending("question", "req-q2", "ses_1", "继续？", ["是", "否"])
+  const q2 = ctl.registerPending("form", "req-q2", "ses_1", "继续？", ["是", "否"], { answerKey: "q0", optionValues: ["是", "否"] })
   const q2Btns = ctl.buildButtons(q2)
   assert(q2Btns.length === 3, `提问≤2 选项：选项+copy=3（实际 ${q2Btns.length}）`)
   assert(q2Btns.filter((b) => b.value)?.[0]?.value === `select ${q2.code} `, "copy 值为 `select <令牌> `（带尾空格，粘贴补数字）")
+  // 按钮 body 必须提交 option.value（回传值），而不是 label
+  assert(q2Btns[0]?.body === `answer ${q2.code} 是`, `选项按钮提交回传值（实际 ${q2Btns[0]?.body}）`)
 
-  const q5 = ctl.registerPending("question", "req-q5", "ses_1", "选哪个？", ["a", "b", "c", "d", "e"])
+  const q5 = ctl.registerPending("form", "req-q5", "ses_1", "选哪个？", ["a", "b", "c", "d", "e"])
   assert(ctl.buildButtons(q5).length === 1 && ctl.buildButtons(q5)[0].value !== undefined, "提问≥3 选项：仅 1 个 copy 按钮")
 
   // 完成类：say 复制值携带 **session 型凭证令牌**（而非会话码 sc-）
@@ -174,9 +183,9 @@ function testButtons() {
   assert(ctl.buildStatusButton("ses_1").body?.startsWith("status oc-") === true, "状态按钮 body 携带凭证")
 
   const noCopy = mkController(false)
-  const q2No = noCopy.registerPending("question", "req-nc", "ses_1", "继续？", ["是", "否"])
+  const q2No = noCopy.registerPending("form", "req-nc", "ses_1", "继续？", ["是", "否"])
   assert(noCopy.buildButtons(q2No).length === 2, "copy_button=false：提问≤2 只剩 2 个选项按钮")
-  const q5No = noCopy.registerPending("question", "req-nc5", "ses_1", "选哪个？", ["a", "b", "c", "d", "e"])
+  const q5No = noCopy.registerPending("form", "req-nc5", "ses_1", "选哪个？", ["a", "b", "c", "d", "e"])
   assert(noCopy.buildButtons(q5No).length === 3, "copy_button=false：提问≥3 退回 3 个选项按钮")
   assert(noCopy.buildSayCopyButton("ses_1") === undefined, "copy_button=false：无续接复制按钮")
 }
@@ -209,7 +218,7 @@ function testPending() {
 
   // 过期：TTL=0 不可能（构造器最小 30min），用极短 TTL 的独立注册表模拟
   const reg2 = new PendingRegistry(10, "abcd", 1) // 1ms
-  const it2 = reg2.add("question", "r2", "ses_2", "提问")
+  const it2 = reg2.add("form", "r2", "ses_2", "提问")
   await0(5).then(() => {
     assert(reg2.getByCode(it2.code) === undefined, "过期凭证查无此证（静默忽略的前提）")
     done()

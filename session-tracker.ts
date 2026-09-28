@@ -5,8 +5,8 @@
  * 用于会话感知的通知抑制（用户在操作某会话时跳过部分通知）。
  *
  * 状态更新事件：
- *   message.updated / permission.replied / question.replied
- *   command.executed / tui.command.execute
+ *   session.inbox.enqueued / permission.replied / form.replied
+ *   tui.command.execute
  *
  * 生命周期事件：
  *   session.created / session.deleted

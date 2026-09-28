@@ -128,11 +128,11 @@ export interface ReplyConfig {
 export interface PendingItem {
   /**
    * 条目类型（即凭证语义）：
-   * - permission/question：一次性令牌（动作天然只做一次）
+   * - permission/form：一次性令牌（动作天然只做一次）
    * - session：续接凭证，TTL 内可反复用于 say/stop（过期作废）
    */
-  kind: "permission" | "question" | "session"
-  /** v2 reply 用的 requestID（权限与 question 统一用此字段） */
+  kind: "permission" | "form" | "session"
+  /** 回复用的定位 id：permission → requestID；form → formID；session → `session:<会话>` */
   requestID: string
   /** 所属会话 */
   sessionID: string
@@ -140,10 +140,43 @@ export interface PendingItem {
   code: string
   /** 展示用标题（工具名 / 问题摘要），不参与解析 */
   title: string
-  /** question 的可选项（approve/deny 对 permission 无此选项） */
+  /** form 的可选项**显示文本**（approve/deny 对 permission 无此选项） */
   options?: string[]
+  /** 与 `options` 同序的**回传值**（form 字段的 option.value，用于提交答案） */
+  optionValues?: string[]
+  /** form 里承载答案的字段 key（提交答案时作为 answer 的键） */
+  answerKey?: string
   /** 创建时间（用于 TTL 与"最近"排序） */
   createdAt: number
+}
+
+/**
+ * opencode 宿主能力桥（V2）
+ *
+ * V1 时代靠"从注入 client 提取 fetch/headers 自建 v2 SDK client"来应答；
+ * V2 插件 ctx 直接提供 `ctx.permission` / `ctx.session` 域，无需自建 client，
+ * 也因此不再受"直跑模式不监听端口、serverUrl 是死地址"的困扰。
+ *
+ * 本接口是该能力的**窄化视图**：由 index.ts 用 ctx 实现，control/ 层只依赖它，
+ * 从而 control/ 不直接耦合 opencode 的类型包。
+ */
+export interface OpencodeBridge {
+  /** 应答权限请求（V2：sessionID 必填，decision 取值 once/always/reject） */
+  replyPermission(input: {
+    sessionID: string
+    requestID: string
+    decision: "once" | "always" | "reject"
+  }): Promise<void>
+  /** 提交表单答案（V2 取代 V1 的 question.reply） */
+  replyForm(input: {
+    sessionID: string
+    formID: string
+    answer: Record<string, string | number | boolean | ReadonlyArray<string>>
+  }): Promise<void>
+  /** 向会话注入一条用户指令（V2 是扁平 `{ sessionID, text }`，不再有 parts 数组） */
+  prompt(input: { sessionID: string; text: string }): Promise<void>
+  /** 中断会话（V2 由 `abort` 改名为 `interrupt`） */
+  interrupt(input: { sessionID: string }): Promise<void>
 }
 
 /**

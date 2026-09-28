@@ -23,13 +23,18 @@ export class PendingRegistry {
     this.ttlMs = ttlMs > 0 ? ttlMs : 30 * 60 * 1000
   }
 
-  /** 新增待处理条目，返回带令牌的条目（max=0 时不记录，令牌为空） */
+  /**
+   * 新增待处理条目，返回带令牌的条目（max=0 时不记录，令牌为空）
+   *
+   * @param formExtra form 专属：答案字段 key 与选项回传值（permission/session 忽略）
+   */
   add(
     kind: PendingItem["kind"],
     requestID: string,
     sessionID: string,
     title: string,
     options?: string[],
+    formExtra?: Pick<PendingItem, "answerKey" | "optionValues">,
   ): PendingItem {
     this.prune()
     const base: PendingItem = {
@@ -39,6 +44,8 @@ export class PendingRegistry {
       code: "",
       title: title.slice(0, 120),
       options,
+      optionValues: formExtra?.optionValues,
+      answerKey: formExtra?.answerKey,
       createdAt: Date.now(),
     }
     if (this.max === 0) return base
@@ -51,6 +58,8 @@ export class PendingRegistry {
     if (existing) {
       existing.title = base.title
       existing.options = base.options
+      existing.optionValues = base.optionValues
+      existing.answerKey = base.answerKey
       existing.createdAt = Date.now() // 重置 TTL（与"重复事件=仍在等待"语义一致）
       return existing
     }

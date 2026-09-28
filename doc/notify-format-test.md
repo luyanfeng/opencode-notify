@@ -8,14 +8,20 @@
 
 ## 测试用例
 
-### TC1: `question.asked` → `permission_required`
+### TC1: `form.created` → `permission_required`
+
+> opencode 2.x 用 `form` 承载提问（`question.asked` 已随 V1 一起移除）。
+> 会话 ID 在 `data.form.sessionID`（**不在** `data.sessionID`）。
 
 **输入：**
 ```
-type: "question.asked"
-properties:
-  sessionID: "ses_xxx"
-  text: "要读取文件 /home/lyf/xxx 吗"
+type: "form.created"
+data:
+  form:
+    id: "frm_xxx"
+    sessionID: "ses_xxx"
+    title: "要读取文件 /home/lyf/xxx 吗"
+    fields: [{ key: "q0" }]
 ```
 
 **期望输出（无 sessionTopic）：**
@@ -39,14 +45,17 @@ opencode - 需要授权
 
 ---
 
-### TC2: `question.asked`（无 text）→ `permission_required`
+### TC2: `form.created`（无 title）→ `permission_required`
 
 **输入：**
 ```
-type: "question.asked"
-properties:
-  sessionID: "ses_xxx"
-  text: ""
+type: "form.created"
+data:
+  form:
+    id: "frm_xxx"
+    sessionID: "ses_xxx"
+    title: ""
+    fields: []
 ```
 
 **期望输出（有 sessionTopic）：**
@@ -63,13 +72,18 @@ properties:
 
 ### TC3: `permission.asked` → `permission_required`
 
+> V2 不再有 `tool` / `permission` 字段，改为 `action` + `resources[]` + `message`，
+> 三者按 `action - message - resources…` 顺序拼接。
+
 **输入：**
 ```
 type: "permission.asked"
-properties:
+data:
+  id: "prm_xxx"
   sessionID: "ses_xxx"
-  tool: { name: "Bash" }
-  permission: "command"
+  action: "bash"
+  resources: ["ls -la"]
+  message: "command"
 ```
 
 **期望输出（有 sessionTopic）：**
@@ -77,62 +91,63 @@ properties:
 [熟悉项目] 需要授权
 事件：需要授权
 会话：ses_xxx
-详情：操作「Bash - command」需要您的授权许可
+详情：操作「bash - command - ls -la」需要您的授权许可
 主题：熟悉项目
 时间：{current_time}
 ```
 
-**边界：`tool` 为字符串时：**
+**边界：无 `message` 与 `resources` 时：**
 ```yaml
-tool: "Bash"
+action: "bash"
 ```
-期望详情：`操作「Bash」需要您的授权许可`
+期望详情：`操作「bash」需要您的授权许可`
 
-**边界：`tool` 为对象无 `name` 时：**
-```yaml
-tool: { type: "FileRead", permission: "read" }
-```
-期望详情：`操作「FileRead - read」需要您的授权许可`
+**边界：`action` 也缺失时：**
+期望详情：`Agent 需要您的授权许可`（回退 `defaultBody`）
 
 ---
 
-### TC4: `session.idle` → `input_required`
+### TC4: `session.idle` → `run_completed`（由 index.ts 状态机合成）
+
+> ⚠️ `route()` 对 idle 事件**返回 null**；`run_completed` 不在 `events.ts` 生成，
+> 而是由 `index.ts` 的会话状态机合成（子会话过滤 + 无活跃子会话后才发）。
 
 **输入：**
 ```
 type: "session.idle"
-properties:
+data:
   sessionID: "ses_xxx"
 ```
 
 **期望输出（有 sessionTopic）：**
 ```
-[熟悉项目] 等待输入
-事件：等待输入
+[熟悉项目] 任务完成
+事件：任务完成
 会话：ses_xxx
-详情：Agent 正在等待您的输入
+详情：Agent 已完成当前任务
 主题：熟悉项目
 时间：{current_time}
 ```
 
 ---
 
-### TC5: `session.status`(idle) → `input_required`
+### TC5: `session.status`(idle) → 同 TC4
 
 **输入：**
 ```
 type: "session.status"
-properties:
+data:
   sessionID: "ses_xxx"
   status: { type: "idle" }
 ```
 
-**期望输出：** 与 TC4 相同。
+**期望输出：** 与 TC4 相同（`index.ts` 把 `session.status.type==="idle"` 与
+`session.idle` 等价处理）。
 
-**非 idle 状态（busy/retry）不应触发通知：**
+**非 idle 状态不应触发通知：**
 ```
 type: "session.status"
-properties:
+data:
   sessionID: "ses_xxx"
   status: { type: "busy" }
 ```
@@ -140,16 +155,17 @@ properties:
 
 ---
 
-### TC6: `session.error` → `run_failed`
+### TC6: `session.execution.failed` → `run_failed`
+
+> V2 用原生事件取代 V1 的 `session.error`；错误信息在 `data.error.message`
+> （`SessionStructuredError`，不再是 `{name, data:{message}}` 结构）。
 
 **输入：**
 ```
-type: "session.error"
-properties:
+type: "session.execution.failed"
+data:
   sessionID: "ses_xxx"
-  error:
-    name: "APIError"
-    data: { message: "Rate limit exceeded" }
+  error: { type: "api", message: "Rate limit exceeded" }
 ```
 
 **期望输出（有 sessionTopic）：**
@@ -167,16 +183,18 @@ properties:
 
 ---
 
-### TC7: `session.error`(MessageAbortedError) → `run_cancelled`
+### TC7: `session.execution.interrupted` → `run_cancelled`
+
+> V2 原生事件取代 V1 靠 `MessageAbortedError` 名称猜测的做法，无需再判错误名。
+> `data.reason` 取值：`user` / `shutdown` / `superseded` / `inactivity`
+> —— 插件当前**不区分 reason**，四者一律发 `run_cancelled`。
 
 **输入：**
 ```
-type: "session.error"
-properties:
+type: "session.execution.interrupted"
+data:
   sessionID: "ses_xxx"
-  error:
-    name: "MessageAbortedError"
-    data: { message: "用户点击了中断按钮" }
+  reason: "user"
 ```
 
 **期望输出（有 sessionTopic）：**
@@ -184,7 +202,7 @@ properties:
 [熟悉项目] 用户取消
 事件：用户取消
 会话：ses_xxx
-详情：用户中断: 用户点击了中断按钮
+详情：用户主动中断了任务
 主题：熟悉项目
 时间：{current_time}
 ```
