@@ -370,8 +370,9 @@ export default Plugin.define({
           if (assistantSummary) info(`→ 通知输出摘要: "${assistantSummary.slice(0, 100)}"`)
           enrich(msg, sessionTopic, userPrompt, assistantSummary)
 
-          // 远程控制：所有通知附带会话码（供 say/stop 精确寻址）；
-          // 权限/表单额外登记一次性令牌并生成 ntfy 按钮（点按即回传命令）。
+          // 远程控制：凭证一律走一次性令牌（`oc-<实例>-<随机>`，完成类为 session 型续接令牌）；
+          // 权限/表单额外登记令牌并生成 ntfy 按钮（点按即回传命令）。
+          // ⚠️ 会话码 `sc-xxxx` 已从通知正文移除（正文靠 `会话：ses_xxx` 区分会话），故此处不再附带。
           // 注意：events.ts 把 form.created 也映射为 permission_required，
           // 因此必须按原始 type 区分，不能只看 msg.event。
           if (control) {
@@ -394,12 +395,18 @@ export default Plugin.define({
               const reqID = String(form.id ?? "")
               if (reqID) {
                 const formSessionID = String(form.sessionID ?? sessionID)
+                // 只用于**正文展示**的长度上限：ntfy 服务端消息硬限 4095 字节，超限直接 500 →
+                // 通知彻底丢失（不是静默截断）。这些字段由模型生成、长度不可控，必须先截。
+                const clampDisplay = (text: string, limit: number): string =>
+                  text.length > limit ? text.slice(0, limit - 3) + "..." : text
                 // 选项取自第一个带 options 数组的字段（opencode question 工具的字段 key 为 q0/q1/…）：
                 // label 用于显示，value 才是提交给宿主的真实值（两者可能不同）。
                 // ⚠️ 必须在**同一次遍历**里同时产出三数组——select/按钮按下标取回传值，
                 //    一旦这里出现长度不一致的过滤，下标就会错位、提交错答案。
                 //    选项说明（options[].description）只进**正文展示**，绝不进 optionValues，
                 //    因此不影响提交给宿主的真实值。
+                // ⚠️ 这里的 label 一律**原样**入 options（按钮标签与「已回答 X」回执用），
+                //    截断只发生在拼正文那一步，绝不改动三个数组的内容。
                 const optField = form.fields?.find((f) => Array.isArray(f.options) && f.options.length > 0)
                 const options: string[] = []
                 const optionValues: string[] = []
@@ -415,8 +422,8 @@ export default Plugin.define({
                 // 补充说明取同字段的 description，最后才用 form.title 兜底。
                 const questionField =
                   form.fields?.find((f) => String(f?.title ?? "").trim() !== "") ?? optField
-                const questionTitle = String(questionField?.title ?? "").trim()
-                const questionDesc = String(questionField?.description ?? "").trim()
+                const questionTitle = clampDisplay(String(questionField?.title ?? "").trim(), 100)
+                const questionDesc = clampDisplay(String(questionField?.description ?? "").trim(), 200)
                 const questionText = questionTitle || questionDesc || String(form.title ?? "").trim()
                 const item = control.registerPending(
                   "form", reqID, formSessionID, questionText || "提问",
@@ -433,9 +440,14 @@ export default Plugin.define({
                   // 把占位的「输入：需要确认: Questions」换成真问题：
                   // 「输入」= fields[i].description（补充说明，缺失则退回真问题标题），
                   // 另起「问题」行放 fields[i].title（真问题标题）。两者都显示。
+                  // ⚠️ 替换串一律用**函数形式**：字符串形式会解释 $&/$`/$'/$$，
+                  //    而 inputLine 来自模型生成（shell 提示符、$(...)、代码片段都很常见），
+                  //    一旦命中就是正文被撑爆/内容错乱。函数形式不做 $ 展开。
                   const inputLine = questionDesc || questionTitle || "请做出选择"
-                  msg.body = msg.body.replace(/^\*\*输入：\*\*.*$/m, `**输入：** ${inputLine}`)
-                  if (questionTitle && questionTitle !== questionDesc) {
+                  msg.body = msg.body.replace(/^\*\*输入：\*\*.*$/m, () => `**输入：** ${inputLine}`)
+                  // ⚠️ 与 inputLine 比（不是与 questionDesc 比）：字段只有 title 没有 description
+                  //    时 inputLine 就是 questionTitle，用 desc 比会漏判 → 同一句话出现两次。
+                  if (questionTitle && questionTitle !== inputLine) {
                     msg.body = msg.body.replace(/^\*\*输入：\*\*.*$/m, (line) => `${line}\n**问题：** ${questionTitle}`)
                   }
                   // 选项一律写进正文，按钮只是快捷方式。
@@ -446,17 +458,21 @@ export default Plugin.define({
                   if (options.length > 0) {
                     // 每个选项下带出它的说明（description，截断到可读长度），
                     // 让收件人光看通知就知道每个选项是什么，不必回电脑。
-                    // ⚠️ 编号用「#N」而非「N.」：ntfy 手机端会把「  1. x」渲染成列表圆点，
-                    //    "#1" 不会被渲染器当成列表语法。数字与数组下标对应关系不变，
-                    //    `select <令牌> N` 依旧按下标选第 N 项。选项行整体加粗（**…**），
-                    //    ntfy markdown 渲染后突出选项，与下方 ↳ 说明行形成层级。
+                    // ⚠️ 编号不带「#」也不带「.」：回复语法是 `select <令牌> N`，
+                    //    正文若写成 `#1`，用户很可能照抄敲 `select <令牌> #1`，
+                    //    而 parser 的 /^\d+$/ 不匹配 `#1` → 被当自由回答提交并消费令牌（静默错答）。
+                    //    行首是 `**` 而非数字/列表符，渲染器不会把它当列表，粗体照常生效。
+                    //    数字与数组下标对应关系不变，`select <令牌> N` 依旧按下标选第 N 项。
+                    //    选项行整体加粗（**…**），ntfy markdown 渲染后突出选项，与 ↳ 说明行形成层级。
                     const descLimit = 80
+                    const labelLimit = 30
                     const block = options.map((label, i) => {
                       const desc = optionDescs[i]?.trim() ?? ""
-                      // ⚠️ 不能依赖行首空格做缩进：ntfy 渲染器会吃掉行首空格（实测 #1 变顶格）。
-                      //    说明行用「↳」字符前缀表达从属关系——渲染器保留字符，层级不丢。
-                      const line = `**#${i + 1} ${label}**`
-                      return desc ? `${line}\n  ↳ ${desc.length > descLimit ? desc.slice(0, descLimit - 3) + "..." : desc}` : line
+                      // ⚠️ 说明行用「↳」字符前缀表达从属关系——ntfy 渲染器会吃掉行首空格
+                      //    （实测缩进丢失），字符前缀才保得住层级；`↳` 前的两个空格仅是额外排版。
+                      // ⚠️ label 只在这里截断（仅用于正文展示），options[] 里的原值不动。
+                      const line = `**${i + 1} ${clampDisplay(label, labelLimit)}**`
+                      return desc ? `${line}\n  ↳ ${clampDisplay(desc, descLimit)}` : line
                     }).join("\n")
                     msg.body += "\n**选项：**\n" + block
                   }
@@ -497,7 +513,6 @@ export default Plugin.define({
               // 凭证强制协议：所有回复必须带续接令牌（TTL 内可反复 say/stop）
               msg.replyHint = "**回复:** say <令牌> 文本=继续 · stop <令牌>=中断 · status <令牌>=状态"
             }
-            // 会话码只用于通知展示、不作为回复凭证，已从通知移除；sc 相关行不再需要
           }
 
           debug(`→ 匹配通知: ${msg.event} topic="${sessionTopic ?? ""}" prompt="${(userPrompt ?? "").slice(0, 80)}"`)

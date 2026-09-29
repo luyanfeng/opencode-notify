@@ -1,7 +1,6 @@
 import type { ReplyConfig, Command, PendingItem, ControlButton, RawCommandMessage, OpencodeBridge } from "./types.js"
 import { parseCommand, HELP_TEXT, isItemToken } from "./parser.js"
 import { PendingRegistry } from "./pending.js"
-import { SessionCodes } from "./sessions.js"
 import { GotifyProvider } from "./gotify.js"
 import { NtfyPollProvider } from "./ntfy.js"
 import { NtfyStreamProvider } from "./ntfy-stream.js"
@@ -26,7 +25,7 @@ const RECEIPT_BURST = 8
  *       say                  → session.prompt（注入用户指令）
  *       stop                 → session.interrupt（V2 由 abort 改名）
  *       status/help          → 回执状态与帮助
- *   - 维护待处理请求注册表（一次性令牌关联与会话码）
+ *   - 维护待处理请求注册表（一次性令牌关联）
  *   - 生成通知按钮定义（ntfy Actions）
  *   - （可选）向通道发布执行回执
  *
@@ -40,7 +39,6 @@ const RECEIPT_BURST = 8
  */
 export class ControlController {
   readonly registry: PendingRegistry
-  readonly sessionCodes = new SessionCodes()
   private readonly bridge: OpencodeBridge
   /**
    * 实例前缀与待处理注册表都取自**进程级共享状态**（见 `runtime-state.ts`）。
@@ -101,14 +99,8 @@ export class ControlController {
     this.registry.removeByRequestID(requestID)
   }
 
-  /** 会话展示码（仅用于在通知里区分"是哪个会话的通知"，不再作为回复凭证） */
-  sessionCode(sessionID: string): string | undefined {
-    return this.sessionCodes.codeFor(sessionID)
-  }
-
-  /** 会话被删除时回收会话码与该会话的续接凭证 */
+  /** 会话被删除时回收该会话的续接凭证 */
   forgetSession(sessionID: string): void {
-    this.sessionCodes.remove(sessionID)
     this.registry.removeByRequestID(`session:${sessionID}`)
   }
 
@@ -124,7 +116,7 @@ export class ControlController {
    * 生成通知按钮（供 ntfy Actions 渲染；服务端硬限每条 ≤3 个）。
    * - 权限：允许 /（始终允许）/ 拒绝（http，点按即执行）
    * - 提问：选项 ≤2 → 选项按钮 + [复制]；选项 0 或 ≥3 → 仅 [复制]（正文编号，靠数字回复）
-   * - [复制]（copy 动作）：把 `answer <令牌> ` 写入剪贴板，用户粘贴后补写内容发送
+   * - [复制]（copy 动作）：把 `select <令牌> ` 写入剪贴板，用户粘贴后补写序号或文字均可
    */
   buildButtons(item: PendingItem): ControlButton[] {
     if (!item.code) return []
@@ -143,7 +135,8 @@ export class ControlController {
     // 按钮点按提交的必须是 form 的**回传值**（option.value），显示用 label。
     // 两者相同时行为与旧 question 一致；不同时必须用 value，否则宿主匹配不到选项。
     const valueOf = (i: number): string => item.optionValues?.[i] ?? opts[i]
-    // 复制模板给 select（选选项的标准动词）；自由文本回答用选项按钮或手打 answer
+    // 复制模板给 select：`select <令牌> <数字>` 选第 n 项，`select <令牌> <文字>` 自由回答，
+    // 粘贴后补序号或直接写字都能用；选项按钮走的才是 answer（直接提交某个回传值）。
     const copy: ControlButton = { label: "复制选择命令", value: `select ${item.code} ` }
     // 合并模式（启用复制按钮）：优先 [复制]（粘贴后补写，无需手打令牌）
     if (this.config.copyButton) {

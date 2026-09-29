@@ -125,9 +125,13 @@ function shortTitle(title: string, maxLen = 20): string {
 export function enrich(msg: Message, sessionTopic?: string, userPrompt?: string, assistantSummary?: string): Message {
   const label = EVENT_LABELS[msg.event] ?? msg.event
 
+  // ⚠️ 下面两处 replace 的替换值都带**变量插值**，必须用**函数形式**（(m) => …）：
+  //    字符串形式会解释 $& / $` / $' / $$，而 userPrompt、sessionTopic 来自用户与
+  //    opencode 生成的标题，含 `$` 很常见（shell 提示符、`$(...)`、代码片段）。
+  //    实测 `$&` 把被匹配整行插回正文、$` 把该行**之前**的正文整段复制进来 → 正文错乱。
   if (userPrompt) {
     msg.title = `[${shortTitle(userPrompt, 16)}] ${label}`
-    msg.body = msg.body.replace(/^\*\*输入：\*\*(.+)$/m, `**输入：** ${shortTitle(userPrompt, 80)}`)
+    msg.body = msg.body.replace(/^\*\*输入：\*\*(.+)$/m, () => `**输入：** ${shortTitle(userPrompt, 80)}`)
   }
 
   if (assistantSummary) {
@@ -135,7 +139,7 @@ export function enrich(msg: Message, sessionTopic?: string, userPrompt?: string,
   }
 
   if (sessionTopic) {
-    msg.body = msg.body.replace(/^(\*\*时间：\*\*.*)$/m, `**主题：** ${sessionTopic}\n$1`)
+    msg.body = msg.body.replace(/^(\*\*时间：\*\*.*)$/m, (_m, timeLine: string) => `**主题：** ${sessionTopic}\n${timeLine}`)
   }
 
   return msg

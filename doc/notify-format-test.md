@@ -46,6 +46,14 @@
 | 用户输入 | `message.ts:shortTitle(p, 80)` | 超 80 字 → 前 **79** 字 + `…`（单个省略号） |
 | 助手输出 | `message.ts:shortTitle(s, 500)` | 超 500 字 → 前 **499** 字 + `…` |
 | 标题里的输入摘要 | `message.ts:shortTitle(p, 16)` | 超 16 字 → 前 **15** 字 + `…` |
+| 提问说明 `fields[i].description` | `index.ts:clampDisplay(s, 200)` | 超 200 字 → 前 **197** 字 + `...` |
+| 提问标题 `fields[i].title` | `index.ts:clampDisplay(s, 100)` | 超 100 字 → 前 **97** 字 + `...` |
+| 选项标签 `options[].label` | `index.ts:clampDisplay(s, 30)` | 超 30 字 → 前 **27** 字 + `...` |
+| 选项说明 `options[].description` | `index.ts:clampDisplay(s, 80)` | 超 80 字 → 前 **77** 字 + `...` |
+
+> 后三行只作用于**正文展示**：`options[].label` / `value` 原样进注册表（按钮标签与
+> 提交给宿主的回传值不受截断影响），`fields[i].title/description` 也仍按原值登记待处理条目。
+> ntfy 服务端消息硬限 4095 字节，超限直接 500 → 通知彻底丢失，所以这几个字段必须先截。
 
 ---
 
@@ -55,6 +63,9 @@
 
 > opencode 2.x 用 `form` 承载提问（`question.asked` 已随 V1 一起移除）。
 > 会话 ID 在 `data.form.sessionID`（**不在** `data.sessionID`）。
+> ⚠️ 本 TC 是**远程控制未启用**时的正文基线（`route()` + `formatBody` 的产物）。
+> 启用远程控制时 `index.ts` 的 form 分支会**改写** `输入：` 行并追加 `令牌：/选项：/回复:`
+> ——两种形态都列在下面，**期望输出必须与控制开关状态成对给出**，否则两者必然对不上。
 
 **输入：**
 ```yaml
@@ -64,10 +75,13 @@ data:
     id: "frm_xxx"
     sessionID: "ses_xxx"
     title: "要读取文件 /home/lyf/xxx 吗"
-    fields: [{ key: "q0" }]
+    fields: [{ key: "q0", title: "要读取文件 /home/lyf/xxx 吗" }]
 ```
 
-**期望输出（无 sessionTopic、无用户输入）：**
+> `fields[0].title` 必须给：真问题只从 `fields` 取（`form.title` 只是 `route()` 用的详情来源），
+> title 为空时 form 分支的 `输入：` 会退化成兜底文案「请做出选择」。
+
+**期望输出（无 sessionTopic、无用户输入、未启用远程控制）：**
 ```
 标题: opencode - 需要授权
 **事件：**「需要确认: 要读取文件 /home/lyf/xxx 吗」
@@ -85,6 +99,15 @@ data:
 **时间：** {current_time}
 **输入：** 需要确认: 要读取文件 /home/lyf/xxx 吗
 ```
+
+**启用远程控制时（同一输入，本例无 options 故无 `选项：` 块）：**
+```
+**输入：** 要读取文件 /home/lyf/xxx 吗
+**令牌：** oc-xxxx-xxxxxx
+**回复:** select <令牌> 文字=自由回答
+```
+> `输入：` 行取 `fields[i].description`，缺失则退回 `fields[i].title`；两者都空才是「请做出选择」。
+> `fields[i].title` 与 `输入：` 内容**相同**时不追加 `问题：` 行（避免同一句话出现两次）。
 
 ---
 
@@ -372,8 +395,10 @@ data:
 
 > ⚠️ 正文里的 **key 列一律是 markdown 加粗**（`**事件：** 「…」`），且 `**` 闭合后必须跟
 > 一个空格/标点，否则 ntfy（goldmark）不渲染粗体。**没有会话码行**（`sc-xxxx` 已从正文移除），
-> 回复提示行也**没有图标前缀**。选项行 `**#N 标签**` 整体加粗，说明行用 `↳` 字符前缀表达从属
-> （不能靠行首空格缩进，ntfy 渲染器会吃掉）。
+> 回复提示行也**没有图标前缀**。选项行 `**N 标签**` 整体加粗，说明行用 `↳` 字符前缀表达从属
+> （不能靠行首空格缩进，ntfy 渲染器会吃掉；`↳` 前的两个空格只是额外排版）。
+> 编号刻意**不带 `#` 也不带 `.`**：回复语法是 `select <令牌> N`，正文写 `#1` 会诱导用户敲
+> `select <令牌> #1`，而 `parser` 的 `/^\d+$/` 不匹配 `#1` → 被当自由回答提交给宿主并消费令牌。
 
 **完成类通知（`run_completed` 等）** —— 注册 session 型凭证：
 ```
@@ -398,9 +423,9 @@ data:
 **输入：** 确认粗体渲染
 **问题：** 粗体渲染
 **选项：**
-**#1 红色**
+**1 红色**
   ↳ 红色选项说明
-**#2 蓝色**
+**2 蓝色**
   ↳ 蓝色选项说明
 **令牌：** oc-6bd0-1d6837
 **回复:** select <令牌> 1~2=选选项 · select <令牌> 文字=自由回答
@@ -408,6 +433,9 @@ data:
 > ⚠️ `form.title` 恒为占位 `Questions`，**不是**真问题；真问题只取 `fields`。
 > `select` 的参数是**纯数字**才选第 n 项，**任意文字**按自由回答处理（只有 `select`，
 > 没有 `option`/`选择`/`选项` 同义词）。
+> ⚠️ 上例的 `输入：确认粗体渲染` / `问题：粗体渲染` 说明 `fields[0].title` 与
+> `fields[0].description` 不同时才有两行；**只有 title 没有 description** 时二者内容相同，
+> `问题：` 行会消失（不重复同一句话）。
 
 ntfy 通知的 `actions` 按钮（≤3 个，服务端硬限）：
 

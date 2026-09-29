@@ -1,5 +1,5 @@
 import type { Command, ParseResult } from "./types.js"
-import { ITEM_TOKEN_RE, SESSION_CODE_RE, INDEX_RE, isRef } from "./tokens.js"
+import { ITEM_TOKEN_RE, INDEX_RE, isRef } from "./tokens.js"
 
 /**
  * 手机命令解析器
@@ -9,9 +9,9 @@ import { ITEM_TOKEN_RE, SESSION_CODE_RE, INDEX_RE, isRef } from "./tokens.js"
  *   2) 动词在标题：  标题 = "approve"，消息体 = "oc-1a2b-3c4d5e"
  *
  * 显式回复协议（不做类型猜测）：
- *   - **纯数字**（整条消息为数字，如 "2"）→ 选「唯一待处理提问」的第 n 个选项（choose）。
- *     这是写死的约定：数字只对"当前待处理提问的选项"有意义；无提问上下文时由 controller 报错。
- *   - **动词开头** → 按动词语义（含 answer/say/approve/...）。
+ *   - **动词开头** → 按动词语义（含 approve/always/deny/answer/select/say/stop/status/help）。
+ *     无动词简写已废除：`parseCommand("2")` 直接报「未知动词: 2」。
+ *   - **select 的参数**是本协议的分支点：纯数字 → 选该提问第 n 个选项；其它文字 → 当自由回答。
  *   - **其它无动词文本** → 解析失败（controller 据此回执语法提示，绝不猜成某类动作）。
  *
  * 安全校验（两种放行方式）：
@@ -91,11 +91,6 @@ const TOKEN_REQUIRED = new Set<Action>(["approve", "always", "deny", "answer", "
 /** 是否为一次性条目令牌 */
 export function isItemToken(token: string): boolean {
   return ITEM_TOKEN_RE.test(token)
-}
-
-/** 是否为会话码 */
-export function isSessionCode(token: string): boolean {
-  return SESSION_CODE_RE.test(token)
 }
 
 interface ParsedParts {

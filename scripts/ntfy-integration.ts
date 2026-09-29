@@ -127,36 +127,47 @@ async function cmdPreview(env: NtfyEnv): Promise<void> {
     action: "http", label, url: selftest, method: "POST", headers: { Authorization: `Bearer ${env.token}` }, body, clear: true,
   })
 
+  // 文案/模板与 index.ts + control/controller.ts 的真实实现逐字对齐（改那两处要同步这里）
   const samples: Record<string, unknown>[] = [
     {
       title: "集成测试·权限请求",
-      message: "操作「bash」需要授权\n令牌：oc-c402-a1b2c3\n回复: approve/deny/always <令牌>",
+      message: "**输入：** 操作「bash」需要您的授权许可\n**令牌：** oc-c402-a1b2c3\n**回复:** approve/deny/always <令牌>",
       priority: 5, tags: [env.botTag],
       actions: [httpAction("允许", "approve oc-c402-a1b2c3"), httpAction("始终允许", "always oc-c402-a1b2c3"), httpAction("拒绝", "deny oc-c402-a1b2c3")],
     },
     {
       title: "集成测试·提问(5选项)",
-      message: "选哪个数据库？\n  1. PostgreSQL\n  2. MySQL\n  3. SQLite\n  4. MongoDB\n  5. Redis\n令牌：oc-c402-d4e5f6\n回复: 1~5=选选项 · answer 文本=自定义",
+      message: [
+        "**输入：** 选哪个数据库？",
+        "**选项：**",
+        "**1 PostgreSQL**",
+        "**2 MySQL**",
+        "**3 SQLite**",
+        "**4 MongoDB**",
+        "**5 Redis**",
+        "**令牌：** oc-c402-d4e5f6",
+        "**回复:** select <令牌> 1~5=选选项 · select <令牌> 文字=自由回答",
+      ].join("\n"),
       priority: 3, tags: [env.botTag],
-      actions: [{ action: "copy", label: "复制回答命令", value: "answer oc-c402-d4e5f6 ", clear: true }],
+      actions: [{ action: "copy", label: "复制选择命令", value: "select oc-c402-d4e5f6 ", clear: true }],
     },
     {
       title: "集成测试·提问(2选项)",
-      message: "是否继续部署？\n回复: 1/2=选选项 · answer 文本=自定义",
+      message: "**输入：** 是否继续部署？\n**选项：**\n**1 是，继续**\n**2 否，停止**\n**令牌：** oc-c402-111111\n**回复:** select <令牌> 1~2=选选项 · select <令牌> 文字=自由回答",
       priority: 3, tags: [env.botTag],
       actions: [
         httpAction("是，继续", "answer oc-c402-111111 是，继续"),
         httpAction("否，停止", "answer oc-c402-111111 否，停止"),
-        { action: "copy", label: "复制回答命令", value: "answer oc-c402-111111 ", clear: true },
+        { action: "copy", label: "复制选择命令", value: "select oc-c402-111111 ", clear: true },
       ],
     },
     {
       title: "集成测试·任务完成",
-      message: "输出摘要：已完成数据库迁移脚本，测试通过\n回复: say 文本=继续 · stop=中断 · status=状态",
+      message: "**输出：** 已完成数据库迁移脚本，测试通过\n**令牌：** oc-c402-9e8d7c\n**回复:** say <令牌> 文本=继续 · stop <令牌>=中断 · status <令牌>=状态",
       priority: 3, tags: [env.botTag],
       actions: [
-        { action: "copy", label: "复制续接命令", value: "say sc-9f3a ", clear: true },
-        httpAction("状态", "status"),
+        { action: "copy", label: "复制续接命令", value: "say oc-c402-9e8d7c ", clear: true },
+        httpAction("状态", "status oc-c402-9e8d7c"),
       ],
     },
     { title: "集成测试·回执", message: "已允许 oc-c402-a1b2c3", priority: 2, tags: [env.botTag] },
@@ -176,16 +187,16 @@ async function cmdCopy(env: NtfyEnv): Promise<void> {
   console.log(`\n[copy] 发送 copy 样本到 ${env.topic}；请在手机点[复制]后到任意输入框粘贴\n`)
   await publish(env, {
     title: "集成测试·copy续接",
-    message: `点 [复制续接命令] 后粘贴，预期得到 "say sc-9f3a␠"（末尾一个空格）`,
+    message: `点 [复制续接命令] 后粘贴，预期得到 "say oc-c402-9e8d7c␠"（末尾一个空格）`,
     priority: 4, tags: [env.botTag],
-    actions: [{ action: "copy", label: "复制续接命令", value: "say sc-9f3a ", clear: false }],
+    actions: [{ action: "copy", label: "复制续接命令", value: "say oc-c402-9e8d7c ", clear: false }],
   })
   await sleep(1200)
   await publish(env, {
-    title: "集成测试·copy回答",
-    message: `点 [复制回答命令] 后粘贴，预期得到 "answer oc-c402-d4e5f6␠"`,
+    title: "集成测试·copy选择",
+    message: `点 [复制选择命令] 后粘贴，预期得到 "select oc-c402-d4e5f6␠"（补序号选选项 / 补文字自由回答）`,
     priority: 4, tags: [env.botTag],
-    actions: [{ action: "copy", label: "复制回答命令", value: "answer oc-c402-d4e5f6 ", clear: false }],
+    actions: [{ action: "copy", label: "复制选择命令", value: "select oc-c402-d4e5f6 ", clear: false }],
   })
   console.log("\n提示：先把 ntfy 切到后台再点 [复制]，以复现 Android 10+ 后台写剪贴板场景。")
 }

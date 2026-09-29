@@ -5,15 +5,13 @@
  *   1. parser：凭证强制语法（动词+令牌 / 令牌+数字 / 令牌+文本）+ 无凭证一律拒绝
  *   2. config：合并单话题 vs 分离模式 / botTag / copyButton
  *   3. controller 按钮编排：凭证在各动作里、权限 3 http、提问、续接 copy
- *   4. sessions：展示码生成与回收
- *   5. pending：一次性消费 / session 型可复用 / 过期静默
+ *   4. pending：一次性消费 / session 型可复用 / 过期静默
  *
  * 运行：bun scripts/control-protocol-smoke.ts
  */
 import { parseCommand } from "../control/parser.js"
 import { resolveConfig } from "../config.js"
 import { ControlController } from "../control/controller.js"
-import { SessionCodes } from "../control/sessions.js"
 import { PendingRegistry } from "../control/pending.js"
 import { isSelfMessage, RECEIPT_TITLE } from "../control/ntfy-common.js"
 import { configureLog } from "../log.js"
@@ -193,19 +191,7 @@ function testButtons() {
   assert(noCopy.buildSayCopyButton("ses_1") === undefined, "copy_button=false：无续接复制按钮")
 }
 
-// ── 4. sessions（展示码） ───────────────────────────────────────────────────
-
-function testSessions() {
-  console.log("\n▶ sessions：展示码生成与回收")
-  const sc = new SessionCodes()
-  const a = sc.codeFor("ses_a")!
-  assert(a.startsWith("sc-"), `展示码形如 sc-xxxx（实际 ${a}）`)
-  assert(sc.codeFor("ses_a") === a, "同会话展示码稳定")
-  sc.remove("ses_a")
-  assert(sc.sessionFor(a) === undefined, "回收后失效")
-}
-
-// ── 5. pending：一次性 / 可复用 / 过期 ──────────────────────────────────────
+// ── 4. pending：一次性 / 可复用 / 过期 ──────────────────────────────────────
 
 function testPending() {
   console.log("\n▶ pending：凭证消费语义")
@@ -307,7 +293,6 @@ async function main() {
   testParser()
   testConfig()
   testButtons()
-  testSessions()
   testPending()
   await await0(30) // 等 testPending 的过期断言
   await testFormReplyTokenSemantics()
