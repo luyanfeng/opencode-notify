@@ -12,6 +12,8 @@ opencode 通知插件（TypeScript，运行于 Bun）。监听 opencode 会话�
   - `bun scripts/events-route-smoke.ts` — **事件映射**（`route()` 对 V2 各事件的输出 + interrupted reason 过滤）
   - `bun scripts/form-reply-bridge-smoke.ts` — **表单应答桥**（服务端侧：注册/成功确认/失败/超时/同 formID 复用/无等待者确认/dispose/派发失败）
   - `bun scripts/control-credential-sharing-smoke.ts` — **凭证共享**（进程级共享：owner 变更/热重载/跨进程隔离/配置指纹重建+迁移/裁剪/静默语义）
+  - `bun scripts/instance-registry-smoke.ts` — **实例注册表**（登记/注销/同名覆盖/归属校验/多 location 隔离/不串台）
+  - `bun scripts/permission-routing-smoke.ts` — **授权应答路由决策**（目标无实例→未打开/宿主 not found→已结算/其它错误不误判/路由不串台/hint 与兜底）
 - 真实 ntfy 集成（需运行时配置，会推手机通知）：
   - `bun scripts/ntfy-integration.ts tags|preview|copy|actions`（⚠️ token 通常按话题授权，只能用配置里的 `topic`，随机话题会 403）
 - ⚠️ `test` 的渠道名取**配置键**：`system_message` / `wechat_work` / `feishu` / `custom_webhook`。帮助/报错里写的 `system` 实际匹配不到任何渠道（`cli.ts:195` 注册名是 `system_message`）。
@@ -37,6 +39,12 @@ opencode 通知插件（TypeScript，运行于 Bun）。监听 opencode 会话�
   - **Effect 错误渲染**：`String(e)` 会退化成 `[object Object]`，取错误信息须用 `tui.ts` 的 `describeError`（读 `_tag`/`message`/JSON）。
   - 失败路径一律**不静默**：回执写明原因且令牌保留可重试（既有「执行成功才消费令牌」约定不变，`control/` 层零改动）。
 - **远程控制经 `OpencodeBridge` 窄接口调宿主**（不再自建 SDK client）：`index.ts` 用 ctx 实现 `replyPermission`/`replyForm`/`prompt`/`interrupt` 四个方法注入 `ControlController`，`control/` 层不直接依赖 opencode 类型包。V1 时代"从注入 client 提取 fetch/headers 自建 v2 client（`buildV2Client`）"那套**已删除**（V2 ctx 直接给域，也不再有 `_input.serverUrl` 死地址问题）。
+- **⚠️ `permission.reply` 受「实例 location」门控 → 必须路由到会话所属 location 的实例**（change `route-permission-reply-by-location`）：宿主只接受「实例 location == 会话所属目录」的调用，否则报 `Permission request not found`。而单例选出的 owner 可能属于任意 location（打开别的项目、`run --standalone` 都会改变），故**不能**用「当前活动实例」直接应答。
+  - 机制：新增进程级**实例注册表** `control/instance-registry.ts`（会合点 `globalThis.__opencodeNotifyInstances__`）。每个实例 `setup` 时登记自己的**最小能力**（**只有 `replyPermission`，勿暴露完整 ctx** —— 暴露 ctx 等于让任意实例对任意 location 调用全部宿主能力，破坏 location 隔离），cleanup 时 `unregister`（**归属校验**，避免旧实例卸载误删新登记）。owner 收到命令后：解析会话 location → `getInstanceByLocation` → 调目标实例的 `replyPermission`。
+  - 路由依据：`PendingItem.locationDirectory`，来源是 **`permission.asked` 事件顶层**的 `location.directory`（⚠️ `data` 内**没有**位置字段）；缺失时用 `ctx.session.get({sessionID})` 兜底 —— 实测 `session.get` **不受** location 门控，可读其它目录的会话。
+  - 失败原因分化（勿合并措辞）：目标无实例 → `PermissionTargetNotOpenError`「该会话所在项目未打开终端，请先打开该项目后重试」；宿主报 not found → `PermissionAlreadySettledError`「该请求已被处理或已取消」；其余原样抛出。**三者都保留令牌**（既有"成功才消费"逻辑）。
+  - 与 form 的对比（**机制相反，勿混**）：form 按 `formID` 在**客户端侧**定位、**不受** location 门控；permission 按**实例 location** 门控、须服务端路由。详表见 `doc/v2-plugin-form-mechanism.md` 第 8.9 节。
+  - 边界：跨进程仍隔离（注册表在 `globalThis`，每进程独立）；实测独立进程的登记表**只含自己**。
 - **opencode V2 插件 API 约定**（`@opencode/plugin@2.x`）：入口是 `export default Plugin.define({ id, async setup(ctx) { … return cleanup } })`，`Cleanup = () => Promise<void> | void`；事件订阅用 `ctx.event.subscribe({ signal })` 返回 `AsyncIterable<Event>`，cleanup 里 `AbortController.abort()` 退出循环。**V2 把事件的 `properties` 统一改名为 `data`**（`events.ts` 的 `V2Event` 就是这个形状）。`ctx.permission.reply` 增了必填 `sessionID`、`reply` 改名为 `decision`（`once`/`always`/`reject`）；`session.abort` 改名为 `session.interrupt`；`session.prompt` 的 `parts` 数组改为扁平 `text`。**已消失的 V1 事件**：`message.part.updated`、`message.updated`、`question.*`、`session.updated`、`command.executed`、`session.error`、`permission.updated`。助手输出采集换源为 `session.text.delta`（**增量** `data.delta`，按 `assistantMessageID` 分桶，`session-tracker.appendAssistantText` 本身就是追加式，无需改）；用户输入采集换源为 `session.inbox.enqueued`（`data.item.type==="user"` → `data.item.payload.text`）；`session.updated` 拆成 `session.created`（**扁平**载荷，`data.parentID`/`data.title`，不再是 `data.info.*`）与 `session.renamed`；`run_failed`/`run_cancelled` 改用原生 `session.execution.failed`（`data.error.message`）/ `session.execution.interrupted`（`data.reason` ∈ user/shutdown/superseded/inactivity，**只 `user` 通知**，见上）。
 - **一次性令牌格式为 `oc-<实例4位>-<随机6位>`，跨模块耦合**：`control/tokens.ts`（生成/正则）→ `control/runtime-state.ts`（**进程级**实例前缀来源）→ `control/pending.ts`（注册表：permission/form 一次性消费，**session 型 TTL 内可复用**）→ `control/parser.ts`（凭证强制语法，见下）→ `control/controller.ts`（凭证门卫：无归属/无效一律静默）。改令牌格式必须同步这 5 处。
 - **`PendingRegistry.add()` 是幂等的**（同 `requestID` 复用既有令牌、只刷标题/选项/TTL）——opencode 会对同一事件连发多次，若轮换令牌，首条通知发给用户的令牌会立刻失效（真机 bug，commit `b9ad788`）。form 的 `answerKey`/`optionValues` 也在这条幂等分支里同步刷新，改动时勿漏。
@@ -78,7 +86,12 @@ control/ (手机 → 插件 → opencode 应答，仅出站连接；配置在 ch
     ↑ 经 OpencodeBridge 调用宿主（index.ts 用 ctx 实现并注入，control/ 不依赖 opencode 类型包）
     ├─ pending.ts (一次性令牌注册表，add() 幂等) / tokens.ts (令牌生成与格式) / sessions.ts (会话码 + 最近会话)
     ├─ parser.ts (命令解析：数字→choose / 动词 / 无动词提示)
+    ├─ runtime-state.ts (进程级：实例前缀 + 注册表 + 配置指纹)
+    ├─ instance-registry.ts (进程级：location → 实例的 replyPermission，供授权应答按 location 路由)
     └─ ntfy-common.ts (tags/认证头/URL/回执) + ntfy-stream.ts (默认长连接) / ntfy.ts (poll 兜底) / gotify.ts (轮询；与 senders/ 同名文件不同：这里读命令，那里发通知)
+
+⚠️ permission 应答按 location 路由：宿主门控「实例 location == 会话所属目录」，
+   故 owner 经 instance-registry 找目标 location 的实例代答（form 则相反，见 tui.ts）
 
 tui.ts (TUI/CLI 插件入口, exports "./tui"，由 CLI 自动加载，跑在终端进程)
   ↑ 服务端 form 应答的唯一通道：form-reply-rpc.ts (契约, 两端共用) + form-reply-bridge.ts (服务端侧派发/等确认)

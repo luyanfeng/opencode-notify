@@ -490,13 +490,41 @@ control: 收到命令 action=choose token=oc-…
 于是宿主加载新 location 时单例夺权换了实例对象，**先前实例发出的所有令牌立刻作废**，手机点按后
 走「无归属令牌」分支被**静默丢弃**（不回执、不报错，用户无从得知）。
 
-关键辨别：**要隔离的是「server 进程」，不是「location」**——因为同进程内所有实例共享同一个宿主
-ctx（`permission.reply` / `session.form.reply` 调用都不带 location），共享一份注册表在语义上正确。
-修法是把「实例前缀 + 待处理注册表」都提到进程级（`control/runtime-state.ts`，`globalThis` 会合点），
+关键辨别：**要隔离的是「server 进程」，不是「location」**——实例前缀与待处理注册表共享的**唯一理由**
+是它们本就该按进程隔离；修法是把二者都提到进程级（`control/runtime-state.ts`，`globalThis` 会合点），
 `globalThis` 每进程独立 → 跨进程/跨机隔离自动保留。
+
+> ⚠️ **曾被本仓库写错的论断（已实测推翻，勿再沿用）**：本 change 当时的 design 曾写
+> 「`permission.reply` / `session.form.reply` 调用都不带 location，故同进程任一实例都能为任意会话应答」。
+> **前半句对、后半句错** —— 调用确实不传 location，但宿主在插件 ctx 的 host 层**按调用实例的
+> location 做门控**（见第 8.9 节）。这条错误推断直接导致了 change `route-permission-reply-by-location`。
 
 **规律（改这类代码前先想一遍）**：进程级的状态放 `globalThis`（模块级变量在多 location 下会被
 求值成多份，不共享）；location 级的状态放实例。放错一边就会出本节这两类 bug。
+
+### 8.9 permission 与 form 的定位机制**不同**（实测，易混淆）
+
+两者都从「手机 → 服务端 → 宿主」应答，但**定位与门控机制完全相反**：
+
+| | form（提问） | permission（授权） |
+|---|---|---|
+| 应答入口 | `context.data.session.form.reply`（**客户端侧**，TUI 上下文） | `ctx.permission.reply`（**服务端**，插件 ctx） |
+| 定位依据 | `formID` + `sessionID`（服务端端点按 ID 查） | **调用实例的 location** 必须 == 会话所属目录 |
+| 是否受实例 location 门控 | ❌ 不受（按 ID 定位） | ✅ **受**（否则报 `Permission request not found`） |
+| 本仓库的应对 | 同包 `./tui` 入口 + RPC 回调确认（按 location 归属过滤） | 进程级实例注册表，把应答**路由**到目标 location 的实例 |
+
+**实测证据（三条，互相印证）**：
+
+1. **7 实例对照**：同一权限请求，7 个实例各自按自己的 location 尝试应答 —— **只有 location 与会话
+   所属目录相同的那一个成功**，其余全部 `Permission request not found`（含当时的 owner）。
+2. **API vs 插件 ctx**：同一请求用 **HTTP API** 应答 **成功**；用 **插件实例** 应答 **失败** —— 证明
+   门控在**插件 ctx 的 host 层**，不在 HTTP 层（HTTP 端点不校验 location）。
+3. **历史回归 6/6 一致**：所有历史授权应答中，「实例 location == 会话 location」→ 成功，「不同」→ 失败，
+   无一例外。
+
+**事件载荷的坑**：`permission.reply` 的入参**不含** location；但 `permission.asked` **事件顶层**带
+`location.directory`（`data` 内只有 `id/sessionID/action/resources`，**没有**位置），故路由依据必须
+从事件顶层取。若缺失，可用 `ctx.session.get()` 兜底 —— 实测它**不受** location 门控，能读其它目录的会话。
 
 ### 8.8 升级边界（一次性影响）
 
