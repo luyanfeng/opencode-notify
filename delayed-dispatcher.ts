@@ -2,6 +2,7 @@ import type { Message } from "./message.js"
 import type { Sender } from "./senders/types.js"
 import { error, warn, info, debug } from "./log.js"
 import { isTerminalOccluded, getSystemIdleMs, getWindowActivationState } from "./terminator-detect.js"
+import { clampBodyBytes, NOTIFY_BODY_MAX_BYTES } from "./text-format.js"
 
 /**
  * 远程延迟通知调度器
@@ -282,6 +283,38 @@ export class DelayedDispatcher {
   }
 
   /**
+   * 延迟推送发送前的正文长度兜底
+   *
+   * 与 Dispatcher.clampBody 同一套规则、同一上限（3600 字节）：ntfy 上限 4095、
+   * 企业微信 4096，超限平台会拒收或静默截断，而截断点可能在令牌行之后 →
+   * 用户收到一条没法回复的通知。
+   *
+   * 延迟推送补上这一层的原因：正文在即时发送之后还会被 markDelayBody 就地追加
+   * 延迟标记（`─────` 分隔线 + `⚠️ 延迟 第N/M次`），字数比即时那版更多，
+   * 只在 Dispatcher 里钳制覆盖不到这条路径。
+   *
+   * 不影响去重：延迟推送不走 store（无去重键），key 已在即时发送时算过。
+   */
+  private clampBody(msg: Message, ch: string): Message {
+    const originalBytes = Buffer.byteLength(msg.body, "utf8")
+    const clamped = clampBodyBytes(msg.body, NOTIFY_BODY_MAX_BYTES)
+    if (!clamped.truncated) return msg
+
+    const afterBytes = Buffer.byteLength(clamped.text, "utf8")
+    warn(
+      `延迟推送正文超长，已截断: event=${msg.event} 会话=${msg.sessionID} ` +
+      `渠道=${ch} ${originalBytes}字节 → ${afterBytes}字节`,
+    )
+    if (clamped.tokenTruncated) {
+      error(
+        `延迟推送正文严重超长，令牌行被硬截断（该通知将无法回复）: event=${msg.event} ` +
+        `会话=${msg.sessionID} ${originalBytes}字节 → ${afterBytes}字节`,
+      )
+    }
+    return { ...msg, body: clamped.text }
+  }
+
+  /**
    * 调度单次延迟发送
    */
   private scheduleOne(sid: string, ch: string, msg: Message): void {
@@ -307,7 +340,13 @@ export class DelayedDispatcher {
         // 发送延迟通知
         const sender = this.senders.get(ch)
         if (sender) {
-          sender.send(msg).catch((err) => {
+          // 延迟推送同样要过长度兜底（ntfy 4095 / 企业微信 4096 字节上限），
+          // 理由同 Dispatcher.clampBody：超限会被平台拒收或静默截掉令牌行。
+          // ⚠️ 用浅拷贝：上面 markDelayBody 已就地改写 msg.body，且重试会复用同一个
+          // msg 对象（递归 scheduleOne），就地钳制会让下一次 markDelayBody 在被截断的
+          // 正文上叠加标记，截断位置逐次前移。
+          const out = this.clampBody(msg, ch)
+          sender.send(out).catch((err) => {
             error(`远程延迟推送失败 会话=${sid} 渠道=${ch}: ${err}`)
             entry.failCount = (entry.failCount ?? 0) + 1
           })

@@ -1,6 +1,7 @@
 import type { Sender } from "./types.js"
 import type { Message } from "../message.js"
 import type { WechatWorkChannelConfig } from "../config.js"
+import { bodyWithReplyHint } from "../text-format.js"
 
 /**
  * 企业微信 群机器人 Webhook 发送器
@@ -34,10 +35,12 @@ export class WechatWorkSender implements Sender {
     }
 
     // 构造 markdown 内容（msg.body 已包含事件/会话/详情/时间/延迟标记）
+    // 企业微信渲染 markdown → **粗体**必须保留，不做 stripInlineBold。
+    // 追加 replyHint：只有 ntfy 自带提示，缺了它用户收到「令牌：oc-xxxx」也不知道命令语法。
     const content = [
       `**${msg.title}**`,
       "",
-      msg.body,
+      bodyWithReplyHint(msg),
     ].join("\n")
 
     const body = JSON.stringify({

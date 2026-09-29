@@ -1,6 +1,7 @@
 import type { Sender } from "./types.js"
 import type { Message } from "../message.js"
 import type { CustomWebhookChannelConfig } from "../config.js"
+import { stripInlineBold, bodyWithReplyHint } from "../text-format.js"
 
 /**
  * 自定义 Webhook 发送器
@@ -34,15 +35,21 @@ export class CustomWebhookSender implements Sender {
       throw new Error("custom_webhook: url not configured")
     }
 
+    // 自定义 webhook 目标不可知（可能是飞书/钉钉等 markdown 型，也可能是纯文本型），
+    // 保守按纯文本处理：先补回复提示（否则用户拿到令牌却不知道命令语法），再剥粗体标记。
+    // 模板插值与默认 JSON 两处复用同一份文本，只算一次。
+    const text = stripInlineBold(bodyWithReplyHint(msg))
+    const sendMsg: Message = { ...msg, body: text }
+
     // 构造请求体
     let body: string | undefined
     if (template) {
-      body = this.interpolate(template, msg)
+      body = this.interpolate(template, sendMsg)
     } else {
       // 默认 JSON 格式
       body = JSON.stringify({
         title: msg.title,
-        message: msg.body,
+        message: text,
         event: msg.event,
         agent: msg.agent,
       })

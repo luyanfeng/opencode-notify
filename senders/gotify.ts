@@ -1,5 +1,6 @@
 import type { Sender } from "./types.js"
 import type { Message } from "../message.js"
+import { stripInlineBold, bodyWithReplyHint } from "../text-format.js"
 
 /**
  * Gotify 通知发送器
@@ -22,6 +23,9 @@ export class GotifyNotifySender implements Sender {
   }
 
   async send(msg: Message): Promise<void> {
+    // Gotify 是纯文本渲染（message 字段不解析 markdown）：
+    // 先补回复提示（否则用户拿到令牌却不知道命令语法），再剥掉粗体标记。
+    const text = stripInlineBold(bodyWithReplyHint(msg))
     const res = await fetch(`${this.serverUrl}/message`, {
       method: "POST",
       headers: {
@@ -30,7 +34,7 @@ export class GotifyNotifySender implements Sender {
       },
       body: JSON.stringify({
         title: msg.title,
-        message: msg.body,
+        message: text,
         priority: this.priority,
       }),
       signal: AbortSignal.timeout(10_000),

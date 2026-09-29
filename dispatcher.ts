@@ -2,6 +2,7 @@ import type { Message } from "./message.js"
 import type { Sender } from "./senders/types.js"
 import { FileStore } from "./store.js"
 import { error, warn, info, debug } from "./log.js"
+import { clampBodyBytes, NOTIFY_BODY_MAX_BYTES } from "./text-format.js"
 
 /**
  * 通知分发器
@@ -85,11 +86,12 @@ export class Dispatcher {
    */
   private async sendWithConcurrency(msg: Message): Promise<PromiseSettledResult<void>[]> {
     const results: PromiseSettledResult<void>[] = new Array(this.senders.length)
+    const out = this.clampBody(msg)
 
     for (let i = 0; i < this.senders.length; i += this.maxConcurrency) {
       const batch = this.senders.slice(i, i + this.maxConcurrency)
       const batchResults = await Promise.allSettled(
-        batch.map((s) => s.send(msg)),
+        batch.map((s) => s.send(out)),
       )
       for (let j = 0; j < batchResults.length; j++) {
         results[i + j] = batchResults[j]
@@ -97,5 +99,39 @@ export class Dispatcher {
     }
 
     return results
+  }
+
+  /**
+   * 发送前钳制正文长度
+   *
+   * ntfy 消息上限 4095 字节、企业微信 4096 字节，超限会被平台直接拒收或静默截断
+   * （后者更糟：用户看到半截通知，连令牌行都可能没了）。这里统一按 3600 字节兜底。
+   *
+   * ⚠️ 返回**浅拷贝**而不是就地改 msg.body：index.ts 把同一个 msg 对象先交给
+   * dispatch() 再交给 delayedDispatcher.schedule()，而 DelayedDispatcher 会
+   * 原地改写 msg.body（markDelayBody 追加延迟标记）。就地钳制会污染延迟推送的内容，
+   * 也会让两次发送的正文互相干扰。
+   *
+   * 去重不受影响：去重 key 在 dispatch() 开头就用 msg.agent/event/sessionID 算好
+   * （store.buildKey / msg.dedupeKey），与 body 内容无关；钳制只影响送给渠道的文本。
+   */
+  private clampBody(msg: Message): Message {
+    const originalBytes = Buffer.byteLength(msg.body, "utf8")
+    const clamped = clampBodyBytes(msg.body, NOTIFY_BODY_MAX_BYTES)
+    if (!clamped.truncated) return msg
+
+    const afterBytes = Buffer.byteLength(clamped.text, "utf8")
+    warn(
+      `通知正文超长，已截断: event=${msg.event} 会话=${msg.sessionID} ` +
+      `${originalBytes}字节 → ${afterBytes}字节`,
+    )
+    if (clamped.tokenTruncated) {
+      // 极端情况：尾部（令牌行及其后）本身就超限，令牌被硬截断 → 这条通知无法回复
+      error(
+        `通知正文严重超长，令牌行被硬截断（该通知将无法回复）: event=${msg.event} ` +
+        `会话=${msg.sessionID} ${originalBytes}字节 → ${afterBytes}字节`,
+      )
+    }
+    return { ...msg, body: clamped.text }
   }
 }
