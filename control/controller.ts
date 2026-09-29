@@ -313,6 +313,7 @@ export class ControlController {
             sessionID: item.sessionID,
             requestID: item.requestID,
             decision,
+            locationDirectory: item.locationDirectory,
           }),
         )
         const prefix = decision === "reject" ? "已拒绝" : "已允许"

@@ -155,6 +155,24 @@ export interface PendingItem {
   createdAt: number
 }
 
+/** 目标项目未打开（该 location 无实例）时抛出 —— 上层据此给出可操作回执 */
+export class PermissionTargetNotOpenError extends Error {
+  readonly targetLocation: string
+  constructor(targetLocation: string) {
+    super(`该会话所在项目未打开终端（${targetLocation}），请先打开该项目后重试`)
+    this.name = "PermissionTargetNotOpenError"
+    this.targetLocation = targetLocation
+  }
+}
+
+/** 宿主已结算（授权请求已被处理/取消）时抛出 —— 与其它失败区分，避免误导 */
+export class PermissionAlreadySettledError extends Error {
+  constructor(detail: string) {
+    super(`该请求已被处理或已取消（${detail}）`)
+    this.name = "PermissionAlreadySettledError"
+  }
+}
+
 /**
  * opencode 宿主能力桥（V2）
  *
@@ -166,11 +184,19 @@ export interface PendingItem {
  * 从而 control/ 不直接耦合 opencode 的类型包。
  */
 export interface OpencodeBridge {
-  /** 应答权限请求（V2：sessionID 必填，decision 取值 once/always/reject） */
+  /**
+   * 应答权限请求（V2：sessionID 必填，decision 取值 once/always/reject）
+   *
+   * ⚠️ 宿主对 `permission.reply` 有**按实例 location 的门控**：只有实例 location
+   * 等于会话所属目录时才认。因此实现方必须把它路由到目标 location 的实例
+   * （见 `instance-registry.ts`），`locationDirectory` 即路由依据。
+   */
   replyPermission(input: {
     sessionID: string
     requestID: string
     decision: "once" | "always" | "reject"
+    /** 会话所属位置目录：应答路由依据（缺失时实现方查会话兜底） */
+    locationDirectory?: string
   }): Promise<void>
   /** 提交表单答案（V2 取代 V1 的 question.reply） */
   replyForm(input: {

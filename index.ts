@@ -16,6 +16,10 @@ import { FilteredSender } from "./senders/types.js"
 import { SessionTracker } from "./session-tracker.js"
 import { ProcessSingleton } from "./process-singleton.js"
 import { FormReplyBridge } from "./form-reply-bridge.js"
+import {
+  registerInstance, unregisterInstance, getInstanceByLocation, listInstanceLocations,
+} from "./control/instance-registry.js"
+import { PermissionTargetNotOpenError, PermissionAlreadySettledError } from "./control/types.js"
 import { configureLog, error, warn, info, debug } from "./log.js"
 import { DelayedDispatcher } from "./delayed-dispatcher.js"
 import { isTerminalOccluded } from "./terminator-detect.js"
@@ -80,8 +84,65 @@ export default Plugin.define({
       // 详见 form-reply-bridge.ts 与 doc/v2-plugin-form-mechanism.md。
       const formReplyBridge = new FormReplyBridge(cfg.form_reply_timeout_ms)
 
+      // ===== 授权应答按 location 路由（见 control/instance-registry.ts）=====
+      // 宿主对 permission.reply 有「按实例 location」的门控：只有实例的 location 等于
+      // 会话所属目录时才认。而活动实例（owner）可能属于任意目录，故必须把应答交给
+      // **会话所属 location 的实例**去执行。
+      const location = ctx.location?.directory ?? "?"
+
+      // 本实例登记自己的最小能力（仅 replyPermission），供其它实例按 location 取用。
+      const selfCapability: import("./control/instance-registry.js").InstanceCapability = {
+        replyPermission: async (i) => { await ctx.permission.reply(i) },
+      }
+      registerInstance(location, selfCapability)
+
+      /**
+       * 解析会话所属 location：优先用事件带来的值，缺失时查会话兜底
+       * （实测 `ctx.session.get` 不受 location 门控，可读其它目录的会话）
+       */
+      const resolveSessionLocation = async (
+        sessionID: string,
+        hint?: string,
+      ): Promise<string | undefined> => {
+        if (hint) return hint
+        try {
+          const s = await ctx.session.get({ sessionID })
+          return (s as unknown as { location?: { directory?: string } })?.location?.directory
+        } catch {
+          return undefined
+        }
+      }
+
       const bridge: OpencodeBridge = {
-        replyPermission: (i) => ctx.permission.reply(i),
+        // 路由：按会话所属 location 找目标实例 → 以**它的**名义应答
+        replyPermission: async (i) => {
+          const target = await resolveSessionLocation(i.sessionID, i.locationDirectory)
+          if (!target) {
+            throw new Error("无法确定该会话所属的项目位置，请稍后重试")
+          }
+          const cap = getInstanceByLocation(target)
+          if (!cap) {
+            // 该项目没有实例（从未打开过）→ 明确告知，而不是笼统的"请求不存在"
+            throw new PermissionTargetNotOpenError(target)
+          }
+          // 以目标实例的名义调用：即使它当前不是活动实例也能成功（宿主按 location 门控）
+          try {
+            await cap.replyPermission({
+              sessionID: i.sessionID,
+              requestID: i.requestID,
+              decision: i.decision,
+            })
+          } catch (e) {
+            // 宿主报「请求不存在」有两种可能：该请求已被处理/取消（最常见），
+            // 或目标实例已过期（陈旧引用）。统一转成"已结算"语义，避免用户误以为
+            // 自己操作有误或令牌失效 —— 与"项目未打开"也区分开。
+            const msg = e instanceof Error ? e.message : JSON.stringify(e)
+            if (/not\s*found|not\s*exist/i.test(msg)) {
+              throw new PermissionAlreadySettledError(msg)
+            }
+            throw e
+          }
+        },
         // 真实投递：emit 请求 → 等 TUI 回调确认 → 成功/失败/超时各有明确结果。
         // 失败与超时都抛错（不静默），由 control/ 层转成回执并保留令牌。
         replyForm: (i) => formReplyBridge.request({
@@ -95,7 +156,7 @@ export default Plugin.define({
       }
       const replyCfg = cfg.channels.ntfy?.reply ?? cfg.channels.gotify?.reply
       const control = replyCfg ? new ControlController(replyCfg, bridge) : undefined
-      const location = ctx.location?.directory ?? "?"
+
 
 
       // 进程级单例：opencode 2.x 每个 location 各加载一份实例，而事件流是 server 级
@@ -115,6 +176,7 @@ export default Plugin.define({
         + `terminator_detect=${!!process.env.TERMINATOR_UUID}`)
       if (control) {
         warn("control: 提问应答经 TUI 入口（tui.ts）投递；若终端客户端未运行，应答会超时并如实回执")
+        info(`control: 实例已登记 location=${location}，当前登记表=${JSON.stringify(listInstanceLocations())}`)
       }
 
       /**
@@ -375,6 +437,11 @@ export default Plugin.define({
               if (reqID) {
                 const item = control.registerPending(
                   "permission", reqID, sessionID, String(data.action ?? "权限请求"),
+                  // 位置（路由依据）：permission.asked 的 location 在**事件顶层**，
+                  // data 里只有 id/sessionID/action/resources（实测确认）。
+                  // 应答时据此把请求路由到该 location 的实例（宿主按实例 location 门控）。
+                  undefined,
+                  { locationDirectory: event.location?.directory },
                 )
                 if (item.code) {
                   msg.controlButtons = control.buildButtons(item)
@@ -460,6 +527,8 @@ export default Plugin.define({
       return () => {
         info(`单例: 插件卸载 location=${location}`)
         formReplyBridge.dispose()
+        // 注销实例登记（校验归属，避免误删同 location 新实例的登记）
+        unregisterInstance(location, selfCapability)
         singleton.release()
       }
     } catch (e) {
