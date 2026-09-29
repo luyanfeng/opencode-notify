@@ -208,7 +208,7 @@ export class ControlController {
     const parsed = parseCommand(m.message, m.title, this.config.secret)
     if (!parsed.ok) {
       // 凭证强制协议：无令牌/语法不合规 → **完全静默**（不发回执，防止刷屏与回环）。
-      // 语法帮助由通知正文尾的「📱 回复: …」提示行承担。
+      // 语法帮助由通知正文尾的「回复: …」提示行承担。
       info(`control: 忽略无凭证/未识别消息 id=${m.id} 原因=${parsed.reason}`)
       return
     }

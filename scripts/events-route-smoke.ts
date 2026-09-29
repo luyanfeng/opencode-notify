@@ -27,10 +27,10 @@ function assert(cond: boolean, label: string): void {
 
 const ALL = ["permission_required", "run_completed", "run_failed", "run_cancelled"]
 
-/** 取详情行（正文里承载业务内容的最后一行，忽略时间戳等易变行） */
+/** 取详情行（正文里承载业务内容的最后一行，忽略时间戳等易变行；key 列已加粗且 **后带空格） */
 function detailOf(body: string): string {
-  const line = body.split("\n").find((l) => l.startsWith("输入："))
-  return line ? line.slice("输入：".length) : ""
+  const line = body.split("\n").find((l) => l.startsWith("**输入：** "))
+  return line ? line.slice("**输入：** ".length) : ""
 }
 
 // ── form.created（提问）───────────────────────────────────────────────────────

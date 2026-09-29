@@ -377,30 +377,49 @@ export default Plugin.define({
           if (control) {
             if (type === "form.created") {
               // V2 的 form.created：data = { form: FormInfo }，会话 ID 在 form.sessionID 里
+              // ⚠️ 真实结构（实测 2.0.19）：form.title 恒为占位 "Questions"，
+              //    真正的问题在 fields[i].title + fields[i].description，
+              //    每个选项的说明在 fields[i].options[j].description —— 读取时都要带上。
               const form = (data.form ?? {}) as {
                 id?: string
                 sessionID?: string
                 title?: string
-                fields?: Array<{ key?: string; options?: Array<{ label?: string; value?: string }> }>
+                fields?: Array<{
+                  key?: string
+                  title?: string
+                  description?: string
+                  options?: Array<{ label?: string; value?: string; description?: string }>
+                }>
               }
               const reqID = String(form.id ?? "")
               if (reqID) {
                 const formSessionID = String(form.sessionID ?? sessionID)
                 // 选项取自第一个带 options 数组的字段（opencode question 工具的字段 key 为 q0/q1/…）：
                 // label 用于显示，value 才是提交给宿主的真实值（两者可能不同）。
-                // ⚠️ 必须在**同一次遍历**里同时产出两数组——select/按钮按下标取回传值，
+                // ⚠️ 必须在**同一次遍历**里同时产出三数组——select/按钮按下标取回传值，
                 //    一旦这里出现长度不一致的过滤，下标就会错位、提交错答案。
+                //    选项说明（options[].description）只进**正文展示**，绝不进 optionValues，
+                //    因此不影响提交给宿主的真实值。
                 const optField = form.fields?.find((f) => Array.isArray(f.options) && f.options.length > 0)
                 const options: string[] = []
                 const optionValues: string[] = []
+                const optionDescs: string[] = []
                 for (const opt of optField?.options ?? []) {
                   const label = String(opt?.label ?? "")
                   if (!label) continue
                   options.push(label)
                   optionValues.push(String(opt?.value ?? label))
+                  optionDescs.push(String(opt?.description ?? ""))
                 }
+                // 真问题：优先取 fields 里第一个带 title 的字段（form.title 只是占位 "Questions"），
+                // 补充说明取同字段的 description，最后才用 form.title 兜底。
+                const questionField =
+                  form.fields?.find((f) => String(f?.title ?? "").trim() !== "") ?? optField
+                const questionTitle = String(questionField?.title ?? "").trim()
+                const questionDesc = String(questionField?.description ?? "").trim()
+                const questionText = questionTitle || questionDesc || String(form.title ?? "").trim()
                 const item = control.registerPending(
-                  "form", reqID, formSessionID, String(form.title ?? "提问"),
+                  "form", reqID, formSessionID, questionText || "提问",
                   options, {
                     answerKey: optField?.key,
                     optionValues,
@@ -411,24 +430,43 @@ export default Plugin.define({
                 )
                 if (item.code) {
                   msg.controlButtons = control.buildButtons(item)
+                  // 把占位的「输入：需要确认: Questions」换成真问题：
+                  // 「输入」= fields[i].description（补充说明，缺失则退回真问题标题），
+                  // 另起「问题」行放 fields[i].title（真问题标题）。两者都显示。
+                  const inputLine = questionDesc || questionTitle || "请做出选择"
+                  msg.body = msg.body.replace(/^\*\*输入：\*\*.*$/m, `**输入：** ${inputLine}`)
+                  if (questionTitle && questionTitle !== questionDesc) {
+                    msg.body = msg.body.replace(/^\*\*输入：\*\*.*$/m, (line) => `${line}\n**问题：** ${questionTitle}`)
+                  }
                   // 选项一律写进正文，按钮只是快捷方式。
                   // ⚠️ 不要图省事只在 ≥3 个时才列：ntfy 硬限 3 个 action，1~2 个选项时
                   //    按钮能盖住，但正文若也不写，收件人除了点按没有任何文字依据，
                   //    转发/锁屏预览/无障碍朗读都读不到选项内容。编号同时供
                   //    `select <令牌> N` 数字回复使用。
                   if (options.length > 0) {
-                    msg.body += "\n选项：\n" + options.map((o, i) => `  ${i + 1}. ${o}`).join("\n")
+                    // 每个选项下带出它的说明（description，截断到可读长度），
+                    // 让收件人光看通知就知道每个选项是什么，不必回电脑。
+                    // ⚠️ 编号用「#N」而非「N.」：ntfy 手机端会把「  1. x」渲染成列表圆点，
+                    //    "#1" 不会被渲染器当成列表语法。数字与数组下标对应关系不变，
+                    //    `select <令牌> N` 依旧按下标选第 N 项。选项行整体加粗（**…**），
+                    //    ntfy markdown 渲染后突出选项，与下方 ↳ 说明行形成层级。
+                    const descLimit = 80
+                    const block = options.map((label, i) => {
+                      const desc = optionDescs[i]?.trim() ?? ""
+                      // ⚠️ 不能依赖行首空格做缩进：ntfy 渲染器会吃掉行首空格（实测 #1 变顶格）。
+                      //    说明行用「↳」字符前缀表达从属关系——渲染器保留字符，层级不丢。
+                      const line = `**#${i + 1} ${label}**`
+                      return desc ? `${line}\n  ↳ ${desc.length > descLimit ? desc.slice(0, descLimit - 3) + "..." : desc}` : line
+                    }).join("\n")
+                    msg.body += "\n**选项：**\n" + block
                   }
-                  msg.body += `\n令牌：${item.code}`
+                  msg.body += `\n**令牌：** ${item.code}`
                   msg.replyHint = options.length > 0
-                    ? `📱 回复: select <令牌> 1~${options.length}=选选项 · answer <令牌> 文本`
-                    : "📱 回复: answer <令牌> 文本"
+                    ? `**回复:** select <令牌> 1~${options.length}=选选项 · select <令牌> 文字=自由回答`
+                    : "**回复:** select <令牌> 文字=自由回答"
                 }
                 // 每条提问都是独立请求：去重 key 含 formID，避免同会话连续提问被吞
                 msg.dedupeKey = `opencode:form:${reqID}`
-                // 会话码用 form 自带的会话 ID（form.created 的 data.sessionID 不存在）
-                const sc = control.sessionCode(formSessionID)
-                if (sc) msg.body += `\n会话码：${sc}`
                 // 用 form 真实会话判定子会话（data.sessionID 缺失，不能复用上面的 sessionID）
                 return await finishNotification(msg, formSessionID)
               }
@@ -445,8 +483,8 @@ export default Plugin.define({
                 )
                 if (item.code) {
                   msg.controlButtons = control.buildButtons(item)
-                  msg.body += `\n令牌：${item.code}`
-                  msg.replyHint = "📱 回复: approve/deny/always <令牌>"
+                  msg.body += `\n**令牌：** ${item.code}`
+                  msg.replyHint = "**回复:** approve/deny/always <令牌>"
                 }
                 msg.dedupeKey = `opencode:permission:${reqID}`
               }
@@ -457,10 +495,9 @@ export default Plugin.define({
               btns.push(control.buildStatusButton(sessionID))
               msg.controlButtons = btns
               // 凭证强制协议：所有回复必须带续接令牌（TTL 内可反复 say/stop）
-              msg.replyHint = "📱 回复: say <令牌> 文本=继续 · stop <令牌>=中断 · status <令牌>=状态"
+              msg.replyHint = "**回复:** say <令牌> 文本=继续 · stop <令牌>=中断 · status <令牌>=状态"
             }
-            const sc = control.sessionCode(sessionID)
-            if (sc) msg.body += `\n会话码：${sc}`
+            // 会话码只用于通知展示、不作为回复凭证，已从通知移除；sc 相关行不再需要
           }
 
           debug(`→ 匹配通知: ${msg.event} topic="${sessionTopic ?? ""}" prompt="${(userPrompt ?? "").slice(0, 80)}"`)

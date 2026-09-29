@@ -129,13 +129,17 @@ function parseParts(tokens: string[], titleVerb?: { action: Action; needsText: b
 
 function finalize(parts: ParsedParts): ParseResult {
   const { verb, ref, args } = parts
-  // select：args[0] 为选项序号（令牌已被 parseParts 消费进 ref）
+  // select：args[0] 纯数字 → 选该提问第 n 个选项；否则整段参数当**自由回答**处理。
+  // 通知里的复制按钮模板就是 `select <令牌> `，用户粘贴后既可能补序号、也可能直接写
+  // 想说的话——同一个入口两种语义，比要求改用 answer 更顺手（宽容不降低安全性：令牌照旧必填）。
   if (verb.action === "choose") {
-    const index = Number(args[0])
-    if (!Number.isInteger(index) || index < 1) {
-      return { ok: false, reason: "select 需要选项序号（select <令牌> <数字>）" }
+    const first = args[0] ?? ""
+    if (/^\d+$/.test(first)) {
+      return { ok: true, command: { action: "choose", ref, index: Number(first) } }
     }
-    return { ok: true, command: { action: "choose", ref, index } }
+    const text = args.join(" ").trim()
+    if (text) return { ok: true, command: { action: "answer", ref, text } }
+    return { ok: false, reason: "select 需要序号或回答（select <令牌> 2 选选项 / select <令牌> 你的回答）" }
   }
   if (verb.needsText) {
     const text = args.join(" ").trim()
@@ -155,7 +159,7 @@ function finalize(parts: ParsedParts): ParseResult {
  * 语法（动词可放标题或正文）：
  *   approve <令牌>            deny <令牌>            always <令牌>
  *   answer <令牌> <文本>       say <令牌> <文本>       stop <令牌>
- *   select <令牌> <数字>       （选该提问第 n 个选项；同义 option/选择/选项）
+ *   select <令牌> <数字|文本>  （数字=选第 n 个选项；其它文本=当自由回答；同义 option/选择/选项）
  *   status <令牌>             help
  *
  * @param message 消息体（命令主载体）
@@ -197,7 +201,8 @@ export const HELP_TEXT = [
   "可用命令（所有命令必须携带通知里的一次性令牌 oc-xxxx）:",
   "  approve / deny / always <令牌>   允许一次 / 拒绝 / 始终允许",
   "  answer <令牌> <文本>             回答提问",
-  "  select <令牌> <数字>             选择该提问的第 n 个选项（同义: option/选择/选项）",
+  "  select <令牌> <数字>             选择该提问的第 n 个选项",
+  "  select <令牌> <文本>             同一入口回复自由文本（同义: option/选择/选项）",
   "  say <令牌> <文本>                向该会话追加指令（续接令牌可反复用）",
   "  stop <令牌>                      中断该会话",
   "  status <令牌>                    查看待处理列表",

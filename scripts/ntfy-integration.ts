@@ -130,19 +130,19 @@ async function cmdPreview(env: NtfyEnv): Promise<void> {
   const samples: Record<string, unknown>[] = [
     {
       title: "集成测试·权限请求",
-      message: "操作「bash」需要授权\n令牌：oc-c402-a1b2c3\n会话码：sc-9f3a\n📱 回复: approve/deny/always <令牌>",
+      message: "操作「bash」需要授权\n令牌：oc-c402-a1b2c3\n回复: approve/deny/always <令牌>",
       priority: 5, tags: [env.botTag],
       actions: [httpAction("允许", "approve oc-c402-a1b2c3"), httpAction("始终允许", "always oc-c402-a1b2c3"), httpAction("拒绝", "deny oc-c402-a1b2c3")],
     },
     {
       title: "集成测试·提问(5选项)",
-      message: "选哪个数据库？\n  1. PostgreSQL\n  2. MySQL\n  3. SQLite\n  4. MongoDB\n  5. Redis\n令牌：oc-c402-d4e5f6\n📱 回复: 1~5=选选项 · answer 文本=自定义",
+      message: "选哪个数据库？\n  1. PostgreSQL\n  2. MySQL\n  3. SQLite\n  4. MongoDB\n  5. Redis\n令牌：oc-c402-d4e5f6\n回复: 1~5=选选项 · answer 文本=自定义",
       priority: 3, tags: [env.botTag],
       actions: [{ action: "copy", label: "复制回答命令", value: "answer oc-c402-d4e5f6 ", clear: true }],
     },
     {
       title: "集成测试·提问(2选项)",
-      message: "是否继续部署？\n📱 回复: 1/2=选选项 · answer 文本=自定义",
+      message: "是否继续部署？\n回复: 1/2=选选项 · answer 文本=自定义",
       priority: 3, tags: [env.botTag],
       actions: [
         httpAction("是，继续", "answer oc-c402-111111 是，继续"),
@@ -152,7 +152,7 @@ async function cmdPreview(env: NtfyEnv): Promise<void> {
     },
     {
       title: "集成测试·任务完成",
-      message: "输出摘要：已完成数据库迁移脚本，测试通过\n会话码：sc-9f3a\n📱 回复: say 文本=继续 · stop=中断 · status=状态",
+      message: "输出摘要：已完成数据库迁移脚本，测试通过\n回复: say 文本=继续 · stop=中断 · status=状态",
       priority: 3, tags: [env.botTag],
       actions: [
         { action: "copy", label: "复制续接命令", value: "say sc-9f3a ", clear: true },

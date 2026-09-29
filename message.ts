@@ -81,22 +81,26 @@ export function defaultBody(event: string): string {
 /**
  * 格式化结构化通知正文
  *
- * 输出格式：
- *   事件：权限请求
- *   会话：ses_abc1234
- *   详情：Agent 需要授权
- *   时间：2026-05-31 15:30:00
+ * 输出格式（key 列加粗，ntfy markdown 渲染）：
+ *   **事件：**权限请求
+ *   **会话：**ses_abc1234
+ *   **详情：**Agent 需要授权
+ *   **时间：**2026-05-31 15:30:00
  */
 export function formatBody(msg: Message): string {
   const now = new Date()
   const time = now.toLocaleString("zh-CN", { hour12: false })
   const eventLabel = EVENT_LABELS[msg.event] ?? msg.event
 
+  // key 列统一 **加粗**，且 `**` 闭合后必须跟空格/标点/换行：CommonMark 强调规则要求
+  // 「**」后直接跟字母/数字/汉字（如 `**会话：**ses`）时闭合判定失败、不渲染粗体
+  //（实测「事件：」粗体（值以「开头）但「会话/时间/输入」不粗）。ntfy 用 goldmark 渲染，
+  //  严格遵守该规则，故统一写成 `**key：** 值`。不支持 markdown 的渠道只是多个空格。
   return [
-    `事件：「${defaultBody(msg.event)}」`,
-    `会话：${shortSession(msg.sessionID)}`,
-    `时间：${time}`,
-    `输入：${msg.body}`,
+    `**事件：**「${defaultBody(msg.event)}」`,
+    `**会话：** ${shortSession(msg.sessionID)}`,
+    `**时间：** ${time}`,
+    `**输入：** ${msg.body}`,
   ].join("\n")
 }
 
@@ -123,15 +127,15 @@ export function enrich(msg: Message, sessionTopic?: string, userPrompt?: string,
 
   if (userPrompt) {
     msg.title = `[${shortTitle(userPrompt, 16)}] ${label}`
-    msg.body = msg.body.replace(/^输入：(.+)$/m, `输入：${shortTitle(userPrompt, 80)}`)
+    msg.body = msg.body.replace(/^\*\*输入：\*\*(.+)$/m, `**输入：** ${shortTitle(userPrompt, 80)}`)
   }
 
   if (assistantSummary) {
-    msg.body += `\n输出：${shortTitle(assistantSummary, 500)}`
+    msg.body += `\n**输出：** ${shortTitle(assistantSummary, 500)}`
   }
 
   if (sessionTopic) {
-    msg.body = msg.body.replace(/^(时间：.*)$/m, `主题：${sessionTopic}\n$1`)
+    msg.body = msg.body.replace(/^(\*\*时间：\*\*.*)$/m, `**主题：** ${sessionTopic}\n$1`)
   }
 
   return msg
