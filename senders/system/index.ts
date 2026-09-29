@@ -15,7 +15,7 @@ import type { Message } from "../../message.js"
 import { notify as darwinNotify } from "./darwin.js"
 import { notify as linuxNotify } from "./linux.js"
 import { notify as win32Notify } from "./win32.js"
-import { stripInlineBold, bodyWithReplyHint } from "../../text-format.js"
+import { stripInlineBold } from "../../text-format.js"
 
 /** 平台通知函数注册表 */
 const notifiers: Record<string, (title: string, body: string) => Promise<void>> = {
@@ -31,14 +31,17 @@ export class SystemSender implements Sender {
     const fn = notifiers[process.platform]
     if (!fn) return // 其他平台静默忽略
 
-    // 原生通知是纯文本：先补回复提示，再去掉 markdown 粗体标记，最后才做 shell 转义。
-    // 顺序不能换 —— stripInlineBold 只认 `**`，而 escape() 会把反引号/美元符转义掉，
-    // 先转义的话正文会出现 `\*\*事件：\*\*` 这种被破坏的标记。
-    // 长度兜底由 Dispatcher.clampBody 在更外层完成（正文含令牌行，不能丢）。
-    const plain = stripInlineBold(bodyWithReplyHint(msg))
-    const { title, body } = sanitize(msg.title, plain)
+    // 原生通知横幅很短，OS 会截断长正文。system 渠道只保留会话/时间/输入/输出
+    // 四行关键信息，去掉事件行、选项、令牌行、回复提示等多余内容。
+    const body = msg.body
+      .split("\n")
+      .filter((line) => /^\*\*(会话|时间|输入|输出)：\*\*/.test(line))
+      .map((line) => stripInlineBold(line))
+      .join("\n")
+
+    const { title, body: safeBody } = sanitize(msg.title, body)
     try {
-      await fn(title, body)
+      await fn(title, safeBody)
     } catch (err) {
       throw new Error(`系统通知失败: ${err}`)
     }
