@@ -31,11 +31,11 @@ export class SystemSender implements Sender {
     const fn = notifiers[process.platform]
     if (!fn) return // 其他平台静默忽略
 
-    // 原生通知横幅很短，OS 会截断长正文。system 渠道只保留会话/时间/输入/输出
-    // 四行关键信息，去掉事件行、选项、令牌行、回复提示等多余内容。
+    // 原生通知横幅很短，OS 会截断长正文。system 渠道只保留事件/会话/时间/输入/输出
+    // 五行关键信息，去掉选项、令牌行、回复提示等多余内容。
     const body = msg.body
       .split("\n")
-      .filter((line) => /^\*\*(会话|时间|输入|输出)：\*\*/.test(line))
+      .filter((line) => /^\*\*(事件|会话|时间|输入|输出)：\*\*/.test(line))
       .map((line) => stripInlineBold(line))
       .join("\n")
 
