@@ -482,8 +482,8 @@ export default Plugin.define({
                   msg.replyHint = options.length > 0
                     ? `**回复:** select <令牌> 1~${options.length}=选选项 · select <令牌> 文字=自由回答`
                     : "**回复:** select <令牌> 文字=自由回答"
-                  // form.created 被映射为 permission_required，标题改回「提问」以免手机显示成授权
-                  msg.title = questionTitle ? `提问：${questionTitle.slice(0, 40)}` : "提问"
+                  // form.created 被映射为 permission_required，标题不能用默认的「需要授权」
+                  msg.title = questionTitle ? questionTitle.slice(0, 50) : "Agent 向您提问"
                 }
                 // 每条提问都是独立请求：去重 key 含 formID，避免同会话连续提问被吞
                 msg.dedupeKey = `opencode:form:${reqID}`
