@@ -43,6 +43,8 @@ opencode 通知插件（TypeScript，运行于 Bun）。监听 opencode 会话�
 - **`custom_webhook` 是命名多配置**：形如 `custom_webhook: { my_slack: { mode, url, ... } }`；旧的单对象写法仍兼容（`normalizeCustomWebhooks` 归一到 key `custom_webhook`）。`buildSenders` 遍历注册，渠道名即用户自定义名。
 - **子会话（background task）只通知 `permission_required`**：其余事件（含 `run_completed`/`run_failed`/`run_cancelled`）一律静默（`index.ts:220-224`，commit `b4e4183` 改前曾是"仅 fail 仍通知"）。
 - **事件路由**：`events.ts:route()` 把 opencode 事件映射为内部 `Message`；`message.ts` 负责格式化（`formatBody`/`enrich`）；`index.ts` 组装发送器和会话追踪。
+- **⚠️ 每 location 一份插件实例 → 必须走 `process-singleton.ts` 收敛**：opencode 2.x **每个 location（项目目录）各加载一份插件实例**，而 `ctx.event.subscribe` 收到的是 server 级公共事件流（**没有 location 维度**），所以同一个事件会被 N 份实例各处理一次 —— 一次事件发 N 条重复通知，外加 N 条 ntfy 长连接、N 套延迟推送。这是宿主设计不是 bug。收敛靠 `process-singleton.ts`：会合点是 `globalThis.__opencodeNotifyRuntime__`（**模块级状态不可用** —— 实测同一 entrypoint 在同进程被求值为 N 份独立模块；`ctx.storage` 也按 location 隔离）。**只有活动实例**订阅事件 + 发通知 + 跑命令通道，其余实例完全空闲。选举规则是**最新注册者直接夺权**，不是"首个上位 + teardown 交接"——后者依赖宿主每次重载都调 cleanup，有例外时第一个实例会永远占着 owner 导致改配置/改代码不生效。改动这里务必同步 `index.ts` 的 `activate`/`deactivate` 与 `finishNotification` 开头的 `isActive()` 闸门。日志判据：`单例: 本实例已上位` / `已让位` / `插件卸载`。
+- **⚠️ 跨进程去重靠 `store.ts` 的 O_EXCL 按键占位**：单例只覆盖「一个 server 进程」。同时跑多个 `opencode server` 时各进程 `lastSent` 互不可见，同一通知仍会发多遍。做法是每个去重 key 建一个占位文件，`open(path,"wx")`（`O_CREAT|O_EXCL`，OS 级原子）抢发送权，拿到 `EEXIST` 即判重复；占位 mtime 即窗口起点，过期可被后来者删除抢占。**三个坑**：① 占位文件必须写 owner token，`clearReservation` 释放前校验归属，否则会误删已被别人抢占的占位、毁掉其去重保证；② 占位创建失败（目录不可写等）**记 error 后照常发送** —— 去重是防噪音优化，送达是主功能，宁可重复也不能不响；③ 占位文件保留 24h，`pruneClaims()` 在 `FileStore` 构造时懒清理。
 - 不要删除/改动仓库根目录的 `config.json`（那是本仓库的 opencode agent 模型配置，已被 gitignore，非插件配置）。
 - 插件配置是 YAML，模板见 `opencode-notify.yaml.example`，运行时配置在 `~/.config/opencode/opencode-notify.yaml`。优先级：YAML > plugin options > 默认值。
 - **⚠️ 部署坑：opencode 2.x 的 `plugin` 数组不再接受 `file://` 单文件，必须写目录**。V1 时代的 `"file:///…/opencode-notify/index.ts"` 在 2.x 下**只会打一条 `configured plugin path must be a directory` 的 WARN 然后静默跳过 —— 插件根本不加载，所有通知/远程控制全部失效，且没有任何报错**。正确写法是去掉文件名、指向插件目录（宿主按 `package.json` 的 `main`/`exports` 解析入口，本仓库两者都已具备）。判定方法：`~/.local/share/opencode/log/opencode.log` 里搜 `msg="loading plugin" id=…opencode-notify` —— **没有这行就是没加载**（WARN 不能作为判据，`~/.config/opencode/plugins/*.ts` 里的文件同样会 WARN 但通过自动扫描正常加载）。改完必须重启 `opencode serve` 才生效（插件只在 server 启动时加载）。
@@ -51,6 +53,8 @@ opencode 通知插件（TypeScript，运行于 Bun）。监听 opencode 会话�
 ## 架构速览
 
 ```
+process-singleton.ts (进程级单例：每 location 一实例 → 只留最新注册者 active)
+        ↓
 index.ts (plugin 入口) → events.ts route() → message.ts enrich/format
        ↓
 dispatcher.ts (即时) + delayed-dispatcher.ts (远程延迟)
@@ -67,7 +71,7 @@ control/ (手机 → 插件 → opencode 应答，仅出站连接；配置在 ch
 
 - `session-tracker.ts`：会话活跃/空闲追踪、用户输入与助手回复累积，驱动抑制与延迟推送取消。
 - `terminator-detect.ts`：Terminator 子屏遮挡检测（需 `TERMINATOR_UUID` 环境变量，检测结果 5s TTL 缓存防高频 `execSync`）。
-- `store.ts`：文件持久化去重（1s 防抖写盘）。
+- `store.ts`：文件持久化去重（1s 防抖写盘）+ 跨进程 O_EXCL 按键占位（见下）。
 - 所有对外 HTTP 请求（wechat-work / feishu / custom-webhook / cli test）均已加 AbortController 超时；平台发送器用的 `execSync` 多数带 `timeout`。
 
 ## 说明

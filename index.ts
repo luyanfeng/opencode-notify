@@ -14,6 +14,7 @@ import { WechatWorkSender } from "./senders/wechat-work.js"
 import { FeishuSender } from "./senders/feishu.js"
 import { FilteredSender } from "./senders/types.js"
 import { SessionTracker } from "./session-tracker.js"
+import { ProcessSingleton } from "./process-singleton.js"
 import { configureLog, error, warn, info, debug } from "./log.js"
 import { DelayedDispatcher } from "./delayed-dispatcher.js"
 import { isTerminalOccluded } from "./terminator-detect.js"
@@ -93,7 +94,17 @@ export default Plugin.define({
       }
       const replyCfg = cfg.channels.ntfy?.reply ?? cfg.channels.gotify?.reply
       const control = replyCfg ? new ControlController(replyCfg, bridge) : undefined
-      control?.start()
+      const location = ctx.location?.directory ?? "?"
+
+      // 进程级单例：opencode 2.x 每个 location 各加载一份实例，而事件流是 server 级
+      // 全局的，同一个事件会被每份实例各处理一次 → 一次事件发 N 条重复通知。
+      // 只有活动实例订阅事件 + 发通知 + 跑命令通道，其余实例完全空闲。
+      // 规则是「最新注册者夺权」而不是「首个注册者上位 + teardown 交接」：
+      // 后者依赖宿主每次重载都调用 cleanup，一旦有例外（只加载新实例而不卸载
+      // 旧实例），第一个实例就会一直占着 owner，改配置/改代码都不生效。
+      // 夺权制不依赖 cleanup，两种时序都成立。详见 process-singleton.ts。
+      // activate 需要引用下方才定义的 handleEvent，这里只能前置声明实例引用。
+      let singleton: ProcessSingleton
 
       info(`插件已加载 host=${ctx.app.name}@${ctx.app.version} log_level=${cfg.log?.level}, events=${JSON.stringify(cfg.events)}, `
         + `suppressActive=${cfg.suppress_when_active}, timeout=${cfg.activity_timeout ?? 60}s, `
@@ -109,6 +120,13 @@ export default Plugin.define({
        * 通知收尾：子会话过滤 → 会话活跃抑制 → 派发 → 延迟推送
        */
       const finishNotification = async (msg: Message, sessionID: string): Promise<void> => {
+        // 非活动实例（已被更新实例夺权 / 待命）：完全不发通知、不排延迟任务，
+        // 否则同一个事件会被 N 份实例各发一遍。
+        if (!singleton.isActive()) {
+          debug(`→ 非活动实例，跳过通知分发 (${msg.event}) 会话=${sessionID}`)
+          return
+        }
+
         // 子会话（background task）：只保留授权/提问通知，完成/取消/失败均静默
         if (tracker.isBackground(sessionID) && msg.event !== "permission_required") {
           debug(`→ 子会话(background task) ${sessionID} 跳过通知 (${msg.event})`)
@@ -324,8 +342,12 @@ export default Plugin.define({
                 )
                 if (item.code) {
                   msg.controlButtons = control.buildButtons(item)
-                  // 选项 ≥3 时按钮放不下（ntfy 硬限 3 个），必须在正文列出编号供数字回复
-                  if (options.length >= 3) {
+                  // 选项一律写进正文，按钮只是快捷方式。
+                  // ⚠️ 不要图省事只在 ≥3 个时才列：ntfy 硬限 3 个 action，1~2 个选项时
+                  //    按钮能盖住，但正文若也不写，收件人除了点按没有任何文字依据，
+                  //    转发/锁屏预览/无障碍朗读都读不到选项内容。编号同时供
+                  //    `select <令牌> N` 数字回复使用。
+                  if (options.length > 0) {
                     msg.body += "\n选项：\n" + options.map((o, i) => `  ${i + 1}. ${o}`).join("\n")
                   }
                   msg.body += `\n令牌：${item.code}`
@@ -376,25 +398,50 @@ export default Plugin.define({
       }
 
       // 事件订阅。V2 的 ctx.event.subscribe(options?) 返回 AsyncIterable<Event>，
-      // options 是 RequestOptions（{ signal, headers, onActivity }），卸载时用它断开循环。
-      const abort = new AbortController()
-      void (async () => {
-        try {
-          for await (const event of ctx.event.subscribe({ signal: abort.signal })) {
-            await handleEvent(event)
+      // options 是 RequestOptions（{ signal, headers, onActivity }），断开时用 signal 退出循环。
+      // 订阅是**活动实例独占**的资源：待命实例不订阅，避免 N 份长连接与重复处理。
+      let abort: AbortController | null = null
+      const startSubscribe = () => {
+        if (abort) return
+        abort = new AbortController()
+        const signal = abort.signal
+        void (async () => {
+          try {
+            for await (const event of ctx.event.subscribe({ signal })) {
+              await handleEvent(event)
+            }
+          } catch (e) {
+            // 订阅流中断即视为插件失效，明确暴露而不静默重试
+            if (!signal.aborted) {
+              error(`事件订阅异常: ${e instanceof Error ? e.message : String(e)}`)
+            }
           }
-        } catch (e) {
-          // 订阅流中断即视为插件失效，明确暴露而不静默重试
-          if (!abort.signal.aborted) {
-            error(`事件订阅异常: ${e instanceof Error ? e.message : String(e)}`)
-          }
-        }
-      })()
+        })()
+      }
+      const stopSubscribe = () => {
+        abort?.abort()
+        abort = null
+      }
 
-      // 清理：停控制通道 + 断开事件订阅
+      // 上位：跑命令通道 + 订阅事件。构造即夺权（最新注册者上位）。
+      singleton = new ProcessSingleton({
+        id: location,
+        activate: () => {
+          control?.start()
+          startSubscribe()
+          info(`单例: 本实例已上位 location=${location}`)
+        },
+        deactivate: () => {
+          stopSubscribe()
+          control?.stop()
+          info(`单例: 本实例已让位 location=${location}`)
+        },
+      })
+
+      // 清理：释放单例槽位（内含停订阅 + 停命令通道；若自己是 owner 则交给最新实例）
       return () => {
-        abort.abort()
-        control?.stop()
+        info(`单例: 插件卸载 location=${location}`)
+        singleton.release()
       }
     } catch (e) {
       error(`插件初始化失败: ${e instanceof Error ? e.message : String(e)}`)
