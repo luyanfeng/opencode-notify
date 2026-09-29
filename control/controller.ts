@@ -6,7 +6,8 @@ import { GotifyProvider } from "./gotify.js"
 import { NtfyPollProvider } from "./ntfy.js"
 import { NtfyStreamProvider } from "./ntfy-stream.js"
 import { isSelfMessage } from "./ntfy-common.js"
-import { newInstanceId, tokenInstance } from "./tokens.js"
+import { tokenInstance } from "./tokens.js"
+import { getControlState } from "./runtime-state.js"
 import { info, warn, debug } from "../log.js"
 
 
@@ -41,8 +42,15 @@ export class ControlController {
   readonly registry: PendingRegistry
   readonly sessionCodes = new SessionCodes()
   private readonly bridge: OpencodeBridge
+  /**
+   * 实例前缀与待处理注册表都取自**进程级共享状态**（见 `runtime-state.ts`）。
+   *
+   * 为什么不放在实例上：宿主每个 location 各加载一份实例，而单例只在其中选一个
+   * owner —— 若前缀/注册表是实例私有的，owner 一变，先前实例发出的令牌就全部作废
+   * （手机端静默无响应）。
+   */
+  private readonly instance: string
   private provider?: import("./types.js").CommandProvider
-  private readonly instance = newInstanceId()
   private started = false
   /** 近期回执时间戳（限流用） */
   private receiptTimes: number[] = []
@@ -51,7 +59,9 @@ export class ControlController {
     private readonly config: ReplyConfig,
     bridge: OpencodeBridge,
   ) {
-    this.registry = new PendingRegistry(config.maxPending, this.instance, config.tokenTtlMs)
+    const state = getControlState({ tokenTtlMs: config.tokenTtlMs, maxPending: config.maxPending })
+    this.instance = state.instance
+    this.registry = state.registry
     this.bridge = bridge
   }
 

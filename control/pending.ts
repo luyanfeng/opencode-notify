@@ -125,6 +125,38 @@ export class PendingRegistry {
     this.items = []
   }
 
+  /**
+   * 快照当前条目（深拷贝）
+   *
+   * 供「配置变更时按新参数重建注册表」迁移条目用（见 `runtime-state.ts`）。
+   * 深拷贝以隔离新旧实例：迁移后旧实例被丢弃，其 items 不应再被改动。
+   */
+  snapshot(): PendingItem[] {
+    return this.items.map((i) => ({
+      ...i,
+      options: i.options ? [...i.options] : undefined,
+      optionValues: i.optionValues ? [...i.optionValues] : undefined,
+    }))
+  }
+
+  /**
+   * 写回既有条目（迁移用）
+   *
+   * ⚠️ 与 `add()` 不同，本方法**不**逐条走 `add` 的裁剪逻辑，因此写入后会
+   * **显式裁剪到 max 一次**，否则「max 调小」不会立即生效。
+   */
+  restore(items: PendingItem[]): void {
+    this.items = items.map((i) => ({
+      ...i,
+      options: i.options ? [...i.options] : undefined,
+      optionValues: i.optionValues ? [...i.optionValues] : undefined,
+    }))
+    if (this.items.length > this.max) {
+      // 保留最新者（与 add 的裁剪方向一致：splice 掉头部旧条目）
+      this.items.splice(0, this.items.length - this.max)
+    }
+  }
+
   /** 清理过期条目 */
   private prune(): void {
     const cutoff = Date.now() - this.ttlMs
