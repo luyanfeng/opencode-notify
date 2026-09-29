@@ -450,6 +450,8 @@ export default Plugin.define({
                   if (questionTitle && questionTitle !== inputLine) {
                     msg.body = msg.body.replace(/^\*\*输入：\*\*.*$/m, (line) => `${line}\n**问题：** ${questionTitle}`)
                   }
+                  // 事件行同样按 form 语义改回提问（permission_required 默认文案是"授权许可"）
+                  msg.body = msg.body.replace(/^\*\*事件：\*\*.*$/m, "**事件：**「Agent 向您提问」")
                   // 选项一律写进正文，按钮只是快捷方式。
                   // ⚠️ 不要图省事只在 ≥3 个时才列：ntfy 硬限 3 个 action，1~2 个选项时
                   //    按钮能盖住，但正文若也不写，收件人除了点按没有任何文字依据，
