@@ -64,10 +64,11 @@ function testParser() {
   // 合法：令牌 + 数字（选选项）
   const sel = parseCommand(`select ${T} 2`)
   assert(sel.ok && sel.command.action === "choose" && sel.command.ref === T && sel.command.index === 2, "select <令牌> 2 → choose(2)")
-  const selOpt = parseCommand(`option ${T} 3`)
-  assert(selOpt.ok && selOpt.command.action === "choose" && selOpt.command.index === 3, "option <令牌> 3 → choose(3)")
-  const selCn = parseCommand(`选择 ${T} 1`)
-  assert(selCn.ok && selCn.command.action === "choose", "选择 <令牌> 1 → choose(1)")
+  const selText = parseCommand(`select ${T} 都不对`)
+  assert(selText.ok && selText.command.action === "answer" && selText.command.text === "都不对", "select <令牌> 文字 → answer(自由回答)")
+  // select 只有自身一个入口，不再收 option/选择/选项 同义词
+  assert(!parseCommand(`option ${T} 3`).ok, "option 同义词已移除")
+  assert(!parseCommand(`选择 ${T} 1`).ok, "选择 同义词已移除")
   // 无动词简写已废除：所有命令必须有明确动词
   const noVerb = parseCommand(`${T} 2`)
   assert(!noVerb.ok, "<令牌> 2（无动词简写）→ 拒绝（所有命令必须显式）")

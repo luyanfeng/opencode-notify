@@ -63,10 +63,8 @@ const VERBS: Record<string, { action: Action; needsText: boolean }> = {
   "指令": { action: "say", needsText: true },
   "追加": { action: "say", needsText: true },
   // select：选该提问第 n 个选项（凭证强制协议的标准写法）
+  // 只有 select 一个入口，不再收 option/选择/选项 同义词：命令越少越不容易记错
   select: { action: "choose", needsText: false },
-  option: { action: "choose", needsText: false },
-  "选择": { action: "choose", needsText: false },
-  "选项": { action: "choose", needsText: false },
   // stop
   stop: { action: "stop", needsText: false },
   abort: { action: "stop", needsText: false },
@@ -159,7 +157,7 @@ function finalize(parts: ParsedParts): ParseResult {
  * 语法（动词可放标题或正文）：
  *   approve <令牌>            deny <令牌>            always <令牌>
  *   answer <令牌> <文本>       say <令牌> <文本>       stop <令牌>
- *   select <令牌> <数字|文本>  （数字=选第 n 个选项；其它文本=当自由回答；同义 option/选择/选项）
+ *   select <令牌> <数字|文本>  （数字=选第 n 个选项；其它文本=当自由回答）
  *   status <令牌>             help
  *
  * @param message 消息体（命令主载体）
@@ -202,7 +200,7 @@ export const HELP_TEXT = [
   "  approve / deny / always <令牌>   允许一次 / 拒绝 / 始终允许",
   "  answer <令牌> <文本>             回答提问",
   "  select <令牌> <数字>             选择该提问的第 n 个选项",
-  "  select <令牌> <文本>             同一入口回复自由文本（同义: option/选择/选项）",
+  "  select <令牌> <文本>             同一入口回复自由文本",
   "  say <令牌> <文本>                向该会话追加指令（续接令牌可反复用）",
   "  stop <令牌>                      中断该会话",
   "  status <令牌>                    查看待处理列表",
