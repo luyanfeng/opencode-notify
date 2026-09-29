@@ -140,7 +140,12 @@ export interface PendingItem {
   code: string
   /** 展示用标题（工具名 / 问题摘要），不参与解析 */
   title: string
-  /** form 的可选项**显示文本**（approve/deny 对 permission 无此选项） */
+  /**
+   * 表单所在位置目录（仅 form 型条目）。
+   * 用于应答时做「归属判定」主判据：服务端把它带给 TUI，TUI 只在其自身位置
+   * 等于该目录时才投递（多终端竞争收敛，见 tui.ts）。
+   */
+  locationDirectory?: string  /** form 的可选项**显示文本**（approve/deny 对 permission 无此选项） */
   options?: string[]
   /** 与 `options` 同序的**回传值**（form 字段的 option.value，用于提交答案） */
   optionValues?: string[]
@@ -172,6 +177,8 @@ export interface OpencodeBridge {
     sessionID: string
     formID: string
     answer: Record<string, string | number | boolean | ReadonlyArray<string>>
+    /** 表单所在位置目录：应答归属判定的主判据（多终端竞争收敛，见 tui.ts） */
+    locationDirectory?: string
   }): Promise<void>
   /** 向会话注入一条用户指令（V2 是扁平 `{ sessionID, text }`，不再有 parts 数组） */
   prompt(input: { sessionID: string; text: string }): Promise<void>

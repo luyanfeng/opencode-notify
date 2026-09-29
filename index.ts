@@ -15,6 +15,7 @@ import { FeishuSender } from "./senders/feishu.js"
 import { FilteredSender } from "./senders/types.js"
 import { SessionTracker } from "./session-tracker.js"
 import { ProcessSingleton } from "./process-singleton.js"
+import { FormReplyBridge } from "./form-reply-bridge.js"
 import { configureLog, error, warn, info, debug } from "./log.js"
 import { DelayedDispatcher } from "./delayed-dispatcher.js"
 import { isTerminalOccluded } from "./terminator-detect.js"
@@ -74,27 +75,28 @@ export default Plugin.define({
       //
       // V2 不再需要 V1 时代"从注入 client 提取 fetch/headers 自建 SDK client"那套：
       // 插件 ctx 直接给 permission / session 域，这里收敛成一个窄桥接接口。
+      // 表单应答桥（服务端侧）：服务端 ctx 无 form 域，无法直接调 session.form.reply。
+      // 改为经 RPC 事件派发给 tui.ts（终端进程），等它回调确认后才判定成败。
+      // 详见 form-reply-bridge.ts 与 doc/v2-plugin-form-mechanism.md。
+      const formReplyBridge = new FormReplyBridge(cfg.form_reply_timeout_ms)
+
       const bridge: OpencodeBridge = {
         replyPermission: (i) => ctx.permission.reply(i),
-        // ⚠️ opencode 2.x 的插件 ctx **没有暴露 form 域**：宿主构造 ctx 用的是白名单对象
-        // 字面量，session 域只有 hook/create/get/switchAgent/switchModel/prompt/generate/
-        // command/synthetic/interrupt/update/move/wait/context。服务端 session.form.reply
-        // 端点存在（TUI 在用），但插件调不到，所以 question 工具建的 form 无法从手机应答。
-        // 这里显式抛错而不是静默：用户点按钮会收到明确回执，而不是石沉大海。
-        // 一旦 opencode 把 form 暴露进 ctx，把这里换成 ctx.session.form.reply 即可，
-        // control/ 层无需改动（OpencodeBridge 签名就是 V2 的 SessionFormReplyInput）。
-        replyForm: () => {
-          throw new Error(
-            "opencode 2.x 插件 ctx 未暴露表单应答接口（session.form.reply），"
-            + "无法从手机应答提问；请回电脑处理",
-          )
-        },
+        // 真实投递：emit 请求 → 等 TUI 回调确认 → 成功/失败/超时各有明确结果。
+        // 失败与超时都抛错（不静默），由 control/ 层转成回执并保留令牌。
+        replyForm: (i) => formReplyBridge.request({
+          formID: i.formID,
+          sessionID: i.sessionID,
+          answer: i.answer,
+          locationDirectory: i.locationDirectory,
+        }),
         prompt: async (i) => { await ctx.session.prompt(i) },
         interrupt: async (i) => { await ctx.session.interrupt(i) },
       }
       const replyCfg = cfg.channels.ntfy?.reply ?? cfg.channels.gotify?.reply
       const control = replyCfg ? new ControlController(replyCfg, bridge) : undefined
       const location = ctx.location?.directory ?? "?"
+
 
       // 进程级单例：opencode 2.x 每个 location 各加载一份实例，而事件流是 server 级
       // 全局的，同一个事件会被每份实例各处理一次 → 一次事件发 N 条重复通知。
@@ -112,8 +114,7 @@ export default Plugin.define({
         + `remote_channels=${JSON.stringify(delayedChannels)}, `
         + `terminator_detect=${!!process.env.TERMINATOR_UUID}`)
       if (control) {
-        warn("control: opencode 2.x 插件 ctx 无 form 域，提问（answer/select）无法从手机应答，"
-          + "点按会收到明确失败回执；权限应答与 say/stop/status 不受影响")
+        warn("control: 提问应答经 TUI 入口（tui.ts）投递；若终端客户端未运行，应答会超时并如实回执")
       }
 
       /**
@@ -338,7 +339,13 @@ export default Plugin.define({
                 }
                 const item = control.registerPending(
                   "form", reqID, formSessionID, String(form.title ?? "提问"),
-                  options, { answerKey: optField?.key, optionValues },
+                  options, {
+                    answerKey: optField?.key,
+                    optionValues,
+                    // 位置（主判据）：form.created 事件顶层带 location.directory。
+                    // 应答时带给 TUI，只有归属该位置的终端客户端才投递。
+                    locationDirectory: event.location?.directory,
+                  },
                 )
                 if (item.code) {
                   msg.controlButtons = control.buildButtons(item)
@@ -423,7 +430,8 @@ export default Plugin.define({
         abort = null
       }
 
-      // 上位：跑命令通道 + 订阅事件。构造即夺权（最新注册者上位）。
+      // 上位：跑命令通道 + 订阅事件。
+      // 构造即夺权（最新注册者上位）。
       singleton = new ProcessSingleton({
         id: location,
         activate: () => {
@@ -438,9 +446,20 @@ export default Plugin.define({
         },
       })
 
+      // 表单应答 RPC：**每个实例都注册**（不是只由活动实例注册）。
+      // ⚠️ RPC 注册是**按 location 作用域**的：只注册一份时，位于其它目录的 TUI
+      //    调 client.rpc(D) 会得到 rpc.unavailable。因此这里放在 activate 之外，
+      //    让每个 location 的实例都提供自己那份 RPC。
+      //    重复派发由「等待表共享 + 单例保证只有活动实例发起 request」共同避免；
+      //    TUI 的 confirm 可能落到任意实例，故等待表放在 globalThis（见 form-reply-bridge.ts）。
+      void formReplyBridge.register(ctx).catch((e: unknown) => {
+        error(`表单应答 RPC 注册失败 location=${location}: ${e instanceof Error ? e.message : String(e)}`)
+      })
+
       // 清理：释放单例槽位（内含停订阅 + 停命令通道；若自己是 owner 则交给最新实例）
       return () => {
         info(`单例: 插件卸载 location=${location}`)
+        formReplyBridge.dispose()
         singleton.release()
       }
     } catch (e) {

@@ -6,7 +6,8 @@
   "main": "index.ts",
   "exports": {
     ".": "./index.ts",
-    "./cli": "./cli.ts"
+    "./cli": "./cli.ts",
+    "./tui": "./tui.ts"
   },
   "bin": {
     "opencode-notify": "cli.ts"

@@ -81,7 +81,7 @@ export class ControlController {
     sessionID: string,
     title: string,
     options?: string[],
-    formExtra?: Pick<PendingItem, "answerKey" | "optionValues">,
+    formExtra?: Pick<PendingItem, "answerKey" | "optionValues" | "locationDirectory">,
   ): PendingItem {
     return this.registry.add(kind, requestID, sessionID, title, options, formExtra)
   }
@@ -320,6 +320,7 @@ export class ControlController {
             sessionID: item.sessionID,
             formID: item.requestID,
             answer: { [item.answerKey ?? "q0"]: answerText },
+            locationDirectory: item.locationDirectory,
           }),
         )
         // 失败不消费令牌：动作没有生效，令牌留着（TTL 内可重试）
@@ -346,6 +347,7 @@ export class ControlController {
             sessionID: item.sessionID,
             formID: item.requestID,
             answer: { [item.answerKey ?? "q0"]: chosenValue },
+            locationDirectory: item.locationDirectory,
           }),
         )
         // 失败不消费令牌（同 answer 分支）

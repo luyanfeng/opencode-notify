@@ -9,6 +9,12 @@ import { debug } from "./log.js"
 export interface V2Event {
   type: string
   data?: Record<string, unknown>
+  /**
+   * 事件发生的位置（`form.created` 等事件带此字段）。
+   * 用于「提问应答归属判定」的主判据：应答请求会带上该目录，
+   * 由 TUI 侧比对自身有效位置，只有归属客户端处理（见 tui.ts）。
+   */
+  location?: { directory?: string; workspaceID?: string }
 }
 
 /**

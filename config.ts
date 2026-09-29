@@ -152,6 +152,12 @@ export interface PluginConfig {
    */
   suppress_events_when_active?: string[]
   /**
+   * 表单（提问）应答等待 TUI 确认的上限（毫秒）
+   * 超过此时间未收到 TUI 回调确认 → 判定「无可用终端客户端」，如实回执并保留令牌
+   * @default 5000
+   */
+  form_reply_timeout_ms?: number
+  /**
    * 超时会话自动淘汰（毫秒）
    * 会话超过此时间无任何活动 → 从追踪 Map 移除（防内存泄漏）
    * @default 600000 (10 分钟)
@@ -570,7 +576,7 @@ function mergeChannel<T extends ChannelConfig>(base?: T, over?: T): T | undefine
 }
 
 /** 默认配置 */
-const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "activity_timeout" | "suppress_events_when_active" | "session_stale_timeout_ms" | "remote_delay_seconds" | "remote_delay_max_count">> & PluginConfig = {
+const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "activity_timeout" | "suppress_events_when_active" | "form_reply_timeout_ms" | "session_stale_timeout_ms" | "remote_delay_seconds" | "remote_delay_max_count">> & PluginConfig = {
   channels: {
     system_message: { mode: "all" },
     screen_flash: { mode: "none" },
@@ -587,6 +593,7 @@ const DEFAULT_CONFIG: Required<Pick<PluginConfig, "suppress_when_active" | "acti
   suppress_when_active: true,
   activity_timeout: 60,
   suppress_events_when_active: ["permission_required"],
+  form_reply_timeout_ms: 5000,
   session_stale_timeout_ms: 600_000,
   remote_delay_channels: [],
   remote_delay_seconds: 60,
@@ -679,6 +686,7 @@ export function resolveConfig(options: PluginConfig): ResolvedPluginConfig {
     suppress_when_active: options.suppress_when_active ?? DEFAULT_CONFIG.suppress_when_active,
     activity_timeout: options.activity_timeout ?? DEFAULT_CONFIG.activity_timeout,
     suppress_events_when_active: options.suppress_events_when_active ?? DEFAULT_CONFIG.suppress_events_when_active,
+    form_reply_timeout_ms: options.form_reply_timeout_ms ?? DEFAULT_CONFIG.form_reply_timeout_ms,
     session_stale_timeout_ms: options.session_stale_timeout_ms ?? DEFAULT_CONFIG.session_stale_timeout_ms,
     remote_delay_channels: options.remote_delay_channels ?? DEFAULT_CONFIG.remote_delay_channels,
     remote_delay_seconds: options.remote_delay_seconds ?? DEFAULT_CONFIG.remote_delay_seconds,

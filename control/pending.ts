@@ -34,7 +34,7 @@ export class PendingRegistry {
     sessionID: string,
     title: string,
     options?: string[],
-    formExtra?: Pick<PendingItem, "answerKey" | "optionValues">,
+    formExtra?: Pick<PendingItem, "answerKey" | "optionValues" | "locationDirectory">,
   ): PendingItem {
     this.prune()
     const base: PendingItem = {
@@ -46,6 +46,7 @@ export class PendingRegistry {
       options,
       optionValues: formExtra?.optionValues,
       answerKey: formExtra?.answerKey,
+      locationDirectory: formExtra?.locationDirectory,
       createdAt: Date.now(),
     }
     if (this.max === 0) return base
@@ -60,6 +61,7 @@ export class PendingRegistry {
       existing.options = base.options
       existing.optionValues = base.optionValues
       existing.answerKey = base.answerKey
+      existing.locationDirectory = base.locationDirectory
       existing.createdAt = Date.now() // 重置 TTL（与"重复事件=仍在等待"语义一致）
       return existing
     }

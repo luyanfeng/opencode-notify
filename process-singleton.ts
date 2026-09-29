@@ -17,8 +17,6 @@
  *
  * ## 选举规则：最新注册者上位
  *
- * ## 选举规则：最新注册者上位
- *
  * 宿主在插件文件变化重载时是会调用 cleanup 的（日志里能看到「插件卸载」），
  * 所以「首个注册者上位 + teardown 交接」并非不能用。但它把正确性押在
  * "宿主每次都调用 cleanup"这个前提上：一旦有例外（只加载新实例而不卸载旧实例），
@@ -84,7 +82,7 @@ export class ProcessSingleton {
     this.slot = slot
     this.runtime = getRuntime()
     this.runtime.slots.push(slot)
-    // 最新注册者直接夺权（宿主不保证调 cleanup，不能等旧 owner 自觉退位）
+    // 最新注册者直接夺权：不能等旧 owner 自觉退位（它要等宿主调 cleanup 才退）
     const previous = this.runtime.owner
     this.runtime.owner = slot
     if (previous && previous !== slot) previous.deactivate()

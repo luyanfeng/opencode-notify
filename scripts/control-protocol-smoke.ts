@@ -17,7 +17,7 @@ import { SessionCodes } from "../control/sessions.js"
 import { PendingRegistry } from "../control/pending.js"
 import { isSelfMessage, RECEIPT_TITLE } from "../control/ntfy-common.js"
 import { configureLog } from "../log.js"
-import type { ReplyConfig, OpencodeBridge } from "../control/types.js"
+import type { ReplyConfig, OpencodeBridge, Command, PendingItem } from "../control/types.js"
 import type { PluginConfig } from "../config.js"
 
 configureLog("off")
@@ -126,7 +126,7 @@ function testConfig() {
 
 // ── 3. controller 按钮编排 + 凭证门卫语义 ───────────────────────────────────
 
-function mkController(copyButton = true): ControlController {
+function mkController(copyButton = true, bridgeOverride?: Partial<OpencodeBridge>): ControlController {
   const reply: ReplyConfig = {
     provider: "ntfy",
     serverUrl: "https://n.example.com",
@@ -146,12 +146,14 @@ function mkController(copyButton = true): ControlController {
     botTag: "opencode",
     copyButton,
   }
-  // 按钮编排测试不触达宿主，用一个"永不生效"的空桥接即可
+  // 按钮编排测试不触达宿主，用一个"永不生效"的空桥接即可；
+  // 表单应答语义测试需要桥接按场景抛错，故允许覆盖。
   const bridge: OpencodeBridge = {
     replyPermission: async () => {},
     replyForm: async () => {},
     prompt: async () => {},
     interrupt: async () => {},
+    ...bridgeOverride,
   }
   return new ControlController(reply, bridge)
 }
@@ -226,6 +228,73 @@ function testPending() {
   function done() { /* 异步收尾在 main 中统计 */ }
 }
 
+// ── 3b. controller：表单应答的令牌消费语义（任务 3.3）────────────────────────
+
+async function testFormReplyTokenSemantics() {
+  console.log("\n▶ controller：表单应答的令牌消费语义")
+
+  // execute 是私有方法；冒烟脚本按其窄契约（Command + PendingItem → 回执文本/null）调用。
+  // 之所以不走 onRawMessage：那需要真实 provider 与回执通道，属于集成层，不属本冒烟范围。
+  type ExecuteFn = (cmd: Command, item: PendingItem) => Promise<string | null>
+  const callExecute = (ctl: ControlController, cmd: Command, item: PendingItem): Promise<string | null> =>
+    (ctl as unknown as { execute: ExecuteFn }).execute(cmd, item)
+
+  // ── 成功：桥接正常 → 回执「已回答」且令牌被消费 ──
+  {
+    const ctl = mkController()
+    const item = ctl.registerPending("form", "req-ok", "ses_1", "继续？", ["是", "否"], {
+      answerKey: "q0",
+      optionValues: ["是", "否"],
+    })
+    const receipt = await callExecute(ctl, { action: "answer", ref: item.code, text: "随便" }, item)
+    assert(receipt === `已回答 ${item.code}`, `成功路径回执为「已回答 <令牌>」（实际 ${receipt}）`)
+    assert(ctl.registry.getByCode(item.code) === undefined, "成功后令牌被消费（查无此证）")
+  }
+
+  // ── 失败（TUI 报已结算）→ 回执含原因，且令牌**保留** ──
+  {
+    const ctl = mkController(undefined, {
+      replyForm: async () => {
+        throw new Error("该提问已被回答或已取消（宿主已结算）")
+      },
+    })
+    const item = ctl.registerPending("form", "req-settled", "ses_1", "继续？", ["是", "否"], {
+      answerKey: "q0",
+      optionValues: ["是", "否"],
+    })
+    const receipt = await callExecute(ctl, { action: "choose", ref: item.code, index: 1 }, item)
+    assert(receipt !== null && receipt.includes("令牌未消费"), `失败回执声明令牌未消费（实际 ${receipt}）`)
+    assert(receipt !== null && receipt.includes("已被回答或已取消"), `失败回执携带原因（实际 ${receipt}）`)
+    assert(ctl.registry.getByCode(item.code) !== undefined, "失败后令牌保留（可重试）")
+  }
+
+  // ── 失败（超时 / 无 TUI）→ 回执含提示，且令牌**保留** ──
+  {
+    const ctl = mkController(undefined, {
+      replyForm: async () => {
+        throw new Error("当前没有终端客户端在运行（等待应答确认超过 5 秒），请回电脑处理")
+      },
+    })
+    const item = ctl.registerPending("form", "req-timeout", "ses_1", "继续？", ["是", "否"], {
+      answerKey: "q0",
+      optionValues: ["是", "否"],
+    })
+    const receipt = await callExecute(ctl, { action: "choose", ref: item.code, index: 2 }, item)
+    assert(receipt !== null && receipt.includes("令牌未消费"), `超时回执声明令牌未消费（实际 ${receipt}）`)
+    assert(receipt !== null && receipt.includes("没有终端客户端"), `超时回执说明无终端客户端（实际 ${receipt}）`)
+    assert(ctl.registry.getByCode(item.code) !== undefined, "超时后令牌保留（可重试）")
+  }
+
+  // ── 令牌与动作不匹配 → 静默（null），不消费 ──
+  {
+    const ctl = mkController()
+    const permItem = ctl.registerPending("permission", "req-perm2", "ses_1", "bash")
+    const receipt = await callExecute(ctl, { action: "answer", ref: permItem.code, text: "x" }, permItem)
+    assert(receipt === null, `权限令牌用于 answer → 静默 null（实际 ${receipt}）`)
+    assert(ctl.registry.getByCode(permItem.code) !== undefined, "静默路径不消费令牌")
+  }
+}
+
 function await0(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)) }
 
 let asyncDone = false
@@ -240,6 +309,7 @@ async function main() {
   testSessions()
   testPending()
   await await0(30) // 等 testPending 的过期断言
+  await testFormReplyTokenSemantics()
   console.log("\n" + "═".repeat(56))
   if (failures === 0) {
     console.log("✅ 全部通过")
