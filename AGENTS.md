@@ -10,6 +10,7 @@ opencode 通知插件（TypeScript，运行于 Bun）。监听 opencode 会话�
   - `bun scripts/control-stream-smoke.ts` — 流式 provider（收消息/断线补漏/400重置/看门狗/401熔断/bot_tag 过滤）
   - `bun scripts/control-protocol-smoke.ts` — 协议层（数字协议/配置合并/按钮编排/sessions）
   - `bun scripts/events-route-smoke.ts` — **事件映射**（`route()` 对 V2 各事件的输出 + interrupted reason 过滤）
+  - `bun scripts/form-reply-bridge-smoke.ts` — **表单应答桥**（服务端侧：注册/成功确认/失败/超时/同 formID 复用/无等待者确认/dispose/派发失败）
 - 真实 ntfy 集成（需运行时配置，会推手机通知）：
   - `bun scripts/ntfy-integration.ts tags|preview|copy|actions`（⚠️ token 通常按话题授权，只能用配置里的 `topic`，随机话题会 403）
 - ⚠️ `test` 的渠道名取**配置键**：`system_message` / `wechat_work` / `feishu` / `custom_webhook`。帮助/报错里写的 `system` 实际匹配不到任何渠道（`cli.ts:195` 注册名是 `system_message`）。
@@ -23,8 +24,17 @@ opencode 通知插件（TypeScript，运行于 Bun）。监听 opencode 会话�
 - **`run_completed` 不在 `events.ts` 里生成**，由 `index.ts` 的会话状态机（`session.idle`/`session.status(idle)` + 子会话追踪）合成。⚠️ V2 另有原生 `session.execution.succeeded`，**已考证并确认不能替代这套状态机**（勿再反复考证，直接维持现状）：① 宿主的 `SessionExecution`（`class Rd extends K()("@opencode/SessionExecution")`）**按 sessionID 独立结算**（`settled` 只 drain 该 sessionID 自己的 inbox），**不等子会话**；宿主自己的通知逻辑也印证这点 —— `Sr(t,p,"Session done", D?.parentID?"subagent_done":"done")`，即子会话各发各的 `succeeded`，只是换了个更安静的音效 + `notification:false`。而 `session.execution.succeeded` 恰恰**不含** `hasActiveChildren()` 提供的"等所有子会话跑完"语义。② `session.idle` 本就是由三个终态事件派生的（宿主 `case "session.execution.succeeded"/"failed"/"interrupted": v(sessionID,"idle")`），现有状态机已完整覆盖 `succeeded`。改事件映射先看 `events.ts` 注释 + `index.ts`。
 - **`run_cancelled` 只对 `reason === "user"` 通知**（`events.ts` 的 `NOTIFIABLE_INTERRUPT_REASONS`），`shutdown`/`superseded`/`inactivity` 一律静默且**绝不降级成 `run_failed`**。依据：宿主的结算判定 `n0()` 里 `reason:"user"` 对应 `AbortError`（= V1 `MessageAbortedError` 口径），`shutdown` 来自 abort 信号（opencode 关闭/重载），而 `shutdown` 被宿主**两处特殊排除** —— SQL 层 `if (type===Interrupted && reason==="shutdown") return;`（不写 `idle_outcome`）、通知层走独立分支。要放宽只需改那个 Set。
 - **`form.created`（提问）在 `events.ts` 里也被映射成 `permission_required`**：需要区分权限与提问时，必须按原始 `type` 判断，不能只看 `msg.event`（`index.ts` 的待处理登记就这么做）。⚠️ `form.created` 的会话 ID 在 `data.form.sessionID`，**不在** `data.sessionID`。
-- **opencode 2.x 提问 = 权限闸 + form，无 question 事件**：宿主 `question` 工具（`id: opencode.tool.question`）先 `Permission.assert({action:"question"})`，通过后 `form.ask({title:"Questions", fields:[{key:"q0"},{key:"q1"}…]})`，答案按 `form.answer["q0"]` 读取（`multiple:true` 时值是 `string[]`）。V1 的 `question.asked/replied/rejected` 三个事件在 2.x **已完全不存在**，`pending.kind` 的 `"question"` 随之改名为 `"form"`。
-- **⚠️ 2.x 插件 ctx 没有 form 域 → 提问无法从手机应答（已知能力缺口，用户已拍板保留通知+按钮）**：服务端有 `session.form.reply` 端点（TUI 在用），但宿主构造 ctx 是**白名单对象字面量**，`session` 域只有 `hook/create/get/switchAgent/switchModel/prompt/generate/command/synthetic/interrupt/update/move/wait/context`；`ctx.rpc` 只能调插件自注册 RPC，不是逃生口。因此 `index.ts` 的 `bridge.replyForm` 是**显式抛错**（不静默），点按后回执写明「opencode 2.x 插件 ctx 未暴露表单应答接口，请回电脑处理」，且**令牌不消费**（可重试）。将来 opencode 暴露 form 后，把 `replyForm` 换成 `ctx.session.form.reply` 即可，`control/` 层无需改动（`OpencodeBridge.replyForm` 签名即 `SessionFormReplyInput`）。变通：把 opencode 配置里 `question` 权限设为 `ask`，提问改走权限通道，可用 `approve` 应答。
+- **opencode 2.x 提问 = 权限闸 + form，无 question 事件**：宿主 `question` 工具（`ctx.tool.list()` 实测 `id` 就是 **`question`**，不是文档早先误写的 `opencode.tool.question`）先 `Permission.assert({action:"question"})`，通过后 `form.ask({title:"Questions", fields:[{key:"q0"},{key:"q1"}…]})`，答案按 `form.answer["q0"]` 读取（`multiple:true` 时值是 `string[]`）。V1 的 `question.asked/replied/rejected` 三个事件在 2.x **已完全不存在**，`pending.kind` 的 `"question"` 随之改名为 `"form"`。
+- **✅ 2.x 提问（form）应答已打通：同包 `./tui` 入口 + RPC 回调确认（机制与实证见 `doc/v2-plugin-form-mechanism.md`）**：`form.reply` 不在服务端插件 ctx（`Context` 无 `form` 域、`SessionDomain` 的 `Pick` 未含、运行时白名单字面量 `adapter.js:417-432`），而在 **TUI/CLI 插件上下文**（`@opencode/plugin/tui` → `context.data.session.form.reply(input, location)`，入参 `{sessionID, formID, answer}`）。实现：
+  - **两个入口**：`index.ts`（服务端，包名 `.`）+ `tui.ts`（终端，`exports["./tui"]`）。暴露 `./tui` 的包由 CLI **自动加载**（官方《CLI plugins》：*"loaded automatically by the CLI"*，**无需**在 `cli.json` 登记）——已实测：CLI 侧插件对账 `plugins=13→14`。
+  - **契约**：`form-reply-rpc.ts` 定义 `events.request`（服务端→TUI）与 `methods.confirm`/`methods.ping`（TUI→服务端），两端**共用同一 definition 对象**（各写一份会在运行时静默失配）。
+  - **⚠️ RPC 注册按 location 作用域（实测踩坑）**：只由单个实例注册时，位于其它目录的 TUI 调 `client.rpc(D)` 会得到 `rpc.unavailable`。因此**每个实例都要注册自己那份**（放在单例 `activate` 之外）；而**等待表必须放 `globalThis`**（`form-reply-bridge.ts` 的 `__opencodeNotifyFormReplyWaiters__`），因为 TUI 的 `confirm` 会打到它自己 location 的实例，可能是任意一个。
+  - **结果判定**：`FormReplyBridge`（`form-reply-bridge.ts`）派发后**等 `confirm`**（超时 `form_reply_timeout_ms`，默认 5000）：`ok:true`→成功（消费令牌）；`ok:false`→抛 `FormReplyFailedError`（回执原因、保留令牌）；超时→抛 `FormReplyTimeoutError`（回执「当前没有终端客户端在运行，请回电脑处理」、保留令牌）。**必须等确认**：RPC 事件即发即忘且订阅是实时连接，不等就无法区分「没人处理」与「已处理」。
+  - **多终端竞争（design D2）**：请求带 `locationDirectory`（来源 `form.created` 事件顶层的 `location.directory`，经 `PendingItem.locationDirectory` 透传），TUI 按「位置匹配（主）→ 会话持有（次，`data.session.sync` 后 `get`）→ 不匹配即静默」过滤；兜底为先到先得 + 已结算静默（`FormAlreadySettledError` 的 `_tag`）。实测 3 终端在线仅归属方投递。
+  - **⚠️ 事件会重放**：同一 `events.request` 载荷会被订阅方反复收到，所以消费方必须幂等（`inFlight` 集合 + 已结算静默）。
+  - **前提与边界**：应答由**终端侧**执行 —— 没有终端客户端运行时无法从手机应答（超时如实告知）；纯后台 `opencode run` 无终端，其无头提问被宿主自行 dismiss，插件管不到。
+  - **Effect 错误渲染**：`String(e)` 会退化成 `[object Object]`，取错误信息须用 `tui.ts` 的 `describeError`（读 `_tag`/`message`/JSON）。
+  - 失败路径一律**不静默**：回执写明原因且令牌保留可重试（既有「执行成功才消费令牌」约定不变，`control/` 层零改动）。
 - **远程控制经 `OpencodeBridge` 窄接口调宿主**（不再自建 SDK client）：`index.ts` 用 ctx 实现 `replyPermission`/`replyForm`/`prompt`/`interrupt` 四个方法注入 `ControlController`，`control/` 层不直接依赖 opencode 类型包。V1 时代"从注入 client 提取 fetch/headers 自建 v2 client（`buildV2Client`）"那套**已删除**（V2 ctx 直接给域，也不再有 `_input.serverUrl` 死地址问题）。
 - **opencode V2 插件 API 约定**（`@opencode/plugin@2.x`）：入口是 `export default Plugin.define({ id, async setup(ctx) { … return cleanup } })`，`Cleanup = () => Promise<void> | void`；事件订阅用 `ctx.event.subscribe({ signal })` 返回 `AsyncIterable<Event>`，cleanup 里 `AbortController.abort()` 退出循环。**V2 把事件的 `properties` 统一改名为 `data`**（`events.ts` 的 `V2Event` 就是这个形状）。`ctx.permission.reply` 增了必填 `sessionID`、`reply` 改名为 `decision`（`once`/`always`/`reject`）；`session.abort` 改名为 `session.interrupt`；`session.prompt` 的 `parts` 数组改为扁平 `text`。**已消失的 V1 事件**：`message.part.updated`、`message.updated`、`question.*`、`session.updated`、`command.executed`、`session.error`、`permission.updated`。助手输出采集换源为 `session.text.delta`（**增量** `data.delta`，按 `assistantMessageID` 分桶，`session-tracker.appendAssistantText` 本身就是追加式，无需改）；用户输入采集换源为 `session.inbox.enqueued`（`data.item.type==="user"` → `data.item.payload.text`）；`session.updated` 拆成 `session.created`（**扁平**载荷，`data.parentID`/`data.title`，不再是 `data.info.*`）与 `session.renamed`；`run_failed`/`run_cancelled` 改用原生 `session.execution.failed`（`data.error.message`）/ `session.execution.interrupted`（`data.reason` ∈ user/shutdown/superseded/inactivity，**只 `user` 通知**，见上）。
 - **一次性令牌格式为 `oc-<实例4位>-<随机6位>`，跨模块耦合**：`control/tokens.ts`（生成/正则）→ `control/pending.ts`（注册表：permission/form 一次性消费，**session 型 TTL 内可复用**）→ `control/parser.ts`（凭证强制语法，见下）→ `control/controller.ts`（凭证门卫：无归属/无效一律静默）。改令牌格式必须同步这 4 处。
@@ -54,8 +64,8 @@ opencode 通知插件（TypeScript，运行于 Bun）。监听 opencode 会话�
 
 ```
 process-singleton.ts (进程级单例：每 location 一实例 → 只留最新注册者 active)
-        ↓
-index.ts (plugin 入口) → events.ts route() → message.ts enrich/format
+
+index.ts (服务端插件入口, exports ".") → events.ts route() → message.ts enrich/format
        ↓
 dispatcher.ts (即时) + delayed-dispatcher.ts (远程延迟)
        ↓
@@ -67,6 +77,10 @@ control/ (手机 → 插件 → opencode 应答，仅出站连接；配置在 ch
     ├─ pending.ts (一次性令牌注册表，add() 幂等) / tokens.ts (令牌生成与格式) / sessions.ts (会话码 + 最近会话)
     ├─ parser.ts (命令解析：数字→choose / 动词 / 无动词提示)
     └─ ntfy-common.ts (tags/认证头/URL/回执) + ntfy-stream.ts (默认长连接) / ntfy.ts (poll 兜底) / gotify.ts (轮询；与 senders/ 同名文件不同：这里读命令，那里发通知)
+
+tui.ts (TUI/CLI 插件入口, exports "./tui"，由 CLI 自动加载，跑在终端进程)
+  ↑ 服务端 form 应答的唯一通道：form-reply-rpc.ts (契约, 两端共用) + form-reply-bridge.ts (服务端侧派发/等确认)
+    手机应答提问：ntfy → index.ts → RPC events.request → tui.ts → form.reply → methods.confirm → index.ts
 ```
 
 - `session-tracker.ts`：会话活跃/空闲追踪、用户输入与助手回复累积，驱动抑制与延迟推送取消。
@@ -77,5 +91,5 @@ control/ (手机 → 插件 → opencode 应答，仅出站连接；配置在 ch
 ## 说明
 
 - 主要在 Ubuntu 24.04 (X11) 测试；`screen-flash` 仅 Linux X11（Python GTK3）。改平台相关代码注意其余平台（`senders/system/{darwin,win32}.ts`）。
-- 文档在 `doc/`（features / install / notify-format-test）。
+- 文档在 `doc/`（features / install / notify-format-test / **v2-plugin-form-mechanism**（2.x form 应答机制与实证，改 form 相关代码前先读））。
 - 仓库根目录的 `plan.md` / `task_plan.md` / `progress.md` / `findings.md` 是会话规划产物（planning-with-files），非项目文档，不要当作参考资料或打包进发布。
