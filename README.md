@@ -9,11 +9,13 @@ opencode 通知插件 — 监听会话关键事件，通过多渠道推送通知
 
 ## 功能一览
 
-- **多渠道通知**：系统通知 + 屏幕跑马灯 + 企业微信 + 飞书 + 自定义 Webhook
+- **多渠道通知**：系统通知 + 屏幕跑马灯 + **ntfy** + **Gotify** + 企业微信 + 飞书 + 自定义 Webhook
+- **通知内操作按钮**（仅 ntfy）：权限请求的「允许 / 始终允许 / 拒绝」直接点按执行，不用回电脑敲命令
+- **远程控制**（ntfy / Gotify）：用手机批准或拒绝权限、回答提问、追加指令、中断任务，详见[远程控制](#远程控制手机--插件--opencode)
 - **会话感知抑制**：用户在 TUI 中操作时，屏上已可见的权限请求类通知自动过滤
 - **屏幕遮挡检测**（Terminator）：子屏最大化被遮挡时强制通知，不遗漏
 - **远程延迟推送**：任务完成后，对远程渠道额外延迟补偿推送，防止离开时错过
-- **去重机制**：同一事件在时间窗口内不重复推送
+- **去重机制**：同一事件在时间窗口内不重复推送（跨进程用文件占位去重）
 - **渠道级事件过滤**：每个渠道可独立配置监听哪些事件
 - **诊断 CLI**：验证配置、发送测试通知、调试事件流
 
@@ -152,6 +154,61 @@ feishu:
   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
 ```
 
+### ntfy（支持操作按钮）
+
+支持 [ntfy.sh](https://ntfy.sh) 或自建服务端。**唯一支持通知内操作按钮的渠道** ——
+权限请求的 `[允许] [始终允许] [拒绝]` 点按即执行，无需回电脑敲命令；按钮走 HTTP 回调
+POST 回插件的命令话题，形成闭环。
+
+```yaml
+ntfy:
+  mode: all
+  server_url: "https://ntfy.example.com"
+  token: "tk_xxxxxxxx"          # 受保护话题的 Bearer token（通知与回复共用）
+  topic: "opencode"             # 单话题：通知 + 命令/回复
+  # priority: 3
+  # reply:                      # 回复能力（不配 = 纯单向通知）
+  #   enabled: true
+  #   # command_topic: "opencode-command"   # 省略 = 合并进 topic（推荐）
+  #   transport: "stream"        # 命令读取：stream(长连接,默认) | poll(短轮询)
+  #   bot_tag: "opencode"        # 插件消息标记（合并模式防回环）
+  #   buttons: true              # 通知附带操作按钮（http）
+  #   button_always: true        # 权限按钮含「始终允许」
+  #   copy_button: true          # 提问/完成类附 [复制] 带令牌命令模板
+```
+
+| 参数 | 说明 |
+|------|------|
+| `server_url` | ntfy 服务端地址（`https://ntfy.sh` 或自建） |
+| `token` | 受保护话题的 Bearer token，通知与回复共用 |
+| `topic` | 通知话题；配了 `reply` 后建议保持单话题合并模式 |
+| `reply` | 回复能力配置，见[远程控制](#远程控制手机--插件--opencode) |
+
+**推荐合并单话题**：手机只订阅一个话题，通知与回复同源。插件发布的消息都带
+`tags:[bot_tag]`，订阅端过滤自身消息防回环。
+
+> ntfy 服务端每条通知**硬限 3 个 action**（超出需自编译服务端），所以提问类通知
+> 在「选项 ≤2」时渲染 `[选项][选项][复制]`，「选项 ≥3 或 0」时只渲染 `[复制]`
+> （此时正文列出全部选项编号，用 `select <令牌> N` 数字回复）。
+
+### Gotify
+
+自托管通知服务，支持通知与[远程控制](#远程控制手机--插件--opencode)。
+**不支持通知内按钮**，回复仅文本命令（需手机端 HTTP Shortcuts / Tasker 等工具发命令）。
+
+```yaml
+gotify:
+  mode: delay_only
+  server_url: "https://gotify.example.com"
+  app_token: "Axxxxxxxx"        # A 开头：发通知/回执
+  # reply:
+  #   enabled: true
+  #   client_token: "Cxxxxxxxx"  # C 开头：读命令话题（必须用 client token）
+  #   app_id: 3
+```
+
+> `app_token`（A 开头）用于发通知与回执；读取命令话题**必须**用 `client_token`（C 开头）。
+
 ---
 
 ## 远程延迟推送
@@ -184,11 +241,15 @@ remote_delay_max_count: 3
 | 命令 | 作用 |
 |------|------|
 | `approve <令牌>` / `deny <令牌>` / `always <令牌>` | 允许一次 / 拒绝 / 始终允许（权限） |
-| `answer <令牌> <文本>` | 回答提问（⚠️ opencode 2.x 下不可用，见下方说明） |
-| `select <令牌> <数字>` | 选该提问第 n 个选项（同义: option/选择/选项） |
+| `select <令牌> <数字>` | 选该提问第 n 个选项 |
+| `select <令牌> <任意文字>` | 提问的**自由回答**（不选选项，直接作答） |
 | `say <令牌> <文本>` | 向会话追加指令（续接令牌 TTL 内可反复用） |
 | `stop <令牌>` | 中断该会话 |
 | `status <令牌>` / `help` | 查看待处理 / 帮助 |
+
+> **只有 `select` 一个入口**回答提问：参数是**纯数字**才选第 n 项，**任意文字**按自由回答处理。
+> （早期的 `answer` / `option` / `选择` / `选项` 同义词已移除，用了会被静默忽略。）
+> 通知正文的选项编号也刻意**不带 `#`**，直接照抄 `select <令牌> 1` 即可。
 
 > ✅ **opencode 2.x：提问可以从手机应答**
 >
@@ -196,6 +257,8 @@ remote_delay_max_count: 3
 > 因此本插件通过**同包的 `./tui` 入口**（终端进程内）代为投递，并经 **RPC 回调确认**闭环：
 > 服务端派发请求 → TUI 调 `session.form.reply` → 回调确认成功与否。
 >
+> - 通知正文会显示**真问题**（`fields[i].title`）、补充说明（`description`）与
+>   **每个选项及其说明**，不必回电脑看清要选什么。
 > - 成功才消费令牌；失败与超时**保留令牌**（TTL 内可重试）并如实回执。
 > - 多个终端同时在线时按「提问所在位置」收敛，仅归属客户端投递，其余静默。
 > - **没有终端客户端运行时**，超时（默认 5 秒，`form_reply_timeout_ms` 可调）后回执
