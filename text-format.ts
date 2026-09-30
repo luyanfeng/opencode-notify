@@ -77,9 +77,9 @@ export function stripInlineBold(text: string): string {
 /**
  * 追加回复提示到正文末尾（有 replyHint 时，body 与 hint 之间一个换行）
  *
- * 与 ntfy 的既有做法（`senders/ntfy.ts`）保持一致 —— 只有 ntfy 自己拼 hint，
- * 其余渠道（企业微信 / gotify / 自定义 webhook / 系统通知）以前看不到命令语法，
- * 用户收到了 `**令牌：** oc-xxxx` 却不知道该发什么命令。
+ * 分工：ntfy 渠道在 `senders/ntfy.ts` 自己拼 hint，其余渠道（企业微信 / gotify /
+ * 自定义 webhook / 系统通知）在此统一追加 —— 否则用户收到 `**令牌：** oc-xxxx`
+ * 却不知道该发什么命令。
  */
 export function bodyWithReplyHint(msg: Message): string {
   return msg.replyHint ? `${msg.body}\n${msg.replyHint}` : msg.body

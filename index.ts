@@ -77,9 +77,8 @@ export default Plugin.define({
       // reply 配置挂在通知渠道下（channels.ntfy.reply / channels.gotify.reply），
       // 二者互斥取其一（同一进程只启动一个命令通道）。
       //
-      // V2 不再需要 V1 时代"从注入 client 提取 fetch/headers 自建 SDK client"那套：
-      // 插件 ctx 直接给 permission / session 域，这里收敛成一个窄桥接接口。
-      // 表单应答桥（服务端侧）：服务端 ctx 无 form 域，无法直接调 session.form.reply。
+      // 插件 ctx 直接给 permission / session 域，应答能力收敛成一个窄桥接接口。
+      // 表单应答桥（服务端侧）：服务端 ctx 无 form 域，无法直接调 session.form.reply，
       // 改为经 RPC 事件派发给 tui.ts（终端进程），等它回调确认后才判定成败。
       // 详见 form-reply-bridge.ts 与 doc/v2-plugin-form-mechanism.md。
       const formReplyBridge = new FormReplyBridge(cfg.form_reply_timeout_ms)
@@ -372,7 +371,7 @@ export default Plugin.define({
 
           // 远程控制：凭证一律走一次性令牌（`oc-<实例>-<随机>`，完成类为 session 型续接令牌）；
           // 权限/表单额外登记令牌并生成 ntfy 按钮（点按即回传命令）。
-          // ⚠️ 会话码 `sc-xxxx` 已从通知正文移除（正文靠 `会话：ses_xxx` 区分会话），故此处不再附带。
+          // ⚠️ 正文靠 `会话：ses_xxx` 区分会话，不附带会话码。
           // 注意：events.ts 把 form.created 也映射为 permission_required，
           // 因此必须按原始 type 区分，不能只看 msg.event。
           if (control) {

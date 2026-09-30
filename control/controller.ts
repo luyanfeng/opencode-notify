@@ -31,8 +31,8 @@ const RECEIPT_BURST = 8
  *
  * 全部为出站连接：不监听任何端口。
  *
- * 宿主能力经 `OpencodeBridge` 窄接口注入（V1 时代是"从注入 client 提取 fetch/headers
- * 自建 SDK client"，V2 插件 ctx 直接给 `ctx.permission` / `ctx.session` 域，无需自建）。
+ * 宿主能力经 `OpencodeBridge` 窄接口注入（插件 ctx 直接提供 `ctx.permission` /
+ * `ctx.session` 域，control/ 层不直接耦合 opencode 类型包）。
  *
  * 多进程隔离：令牌带**本进程实例前缀**。其它进程读到不匹配的令牌时静默忽略，
  * 从而保证同一条按钮命令只被拥有该令牌的进程执行一次。

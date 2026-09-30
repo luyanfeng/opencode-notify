@@ -195,7 +195,7 @@ export interface PluginConfig {
    *   - error → 仅记录错误
    *   - warn  → 错误 + 警告
    *   - info  → 错误 + 警告 + 常规信息（默认）
-   *   - debug → 全部日志（相当于旧版的 debug_log: true）
+   *   - debug → 全部日志
    *
    * file: 日志文件路径，默认 ~/.opencode-notify/plugin.log
    */

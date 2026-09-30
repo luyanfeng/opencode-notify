@@ -27,7 +27,7 @@ export interface V2Event {
  *                通知走独立分支），此时发"用户取消"纯属噪音 —— **静默**
  * - `superseded` 本次执行被更新的执行取代。新的执行会自行发出完成/失败通知，
  *                这里再报一次"取消"是重复打扰 —— **静默**
- * - `inactivity` 空闲超时。V1 时代同样不通知（无对应错误类型）—— **静默**
+ * - `inactivity` 空闲超时。宿主无对应错误类型 —— **静默**
  *
  * 注意：静默是**不通知**，绝不降级成 `run_failed`。
  */
@@ -89,7 +89,7 @@ export function route(
   }
 
   // permission.asked — 工具权限请求
-  // V2 不再有 properties.tool / properties.permission，改为 action + resources + message
+  // data 字段：action + resources + message
   if (type === "permission.asked" && enabled.has("permission_required")) {
     const action = String(data.action ?? "")
     const message = String(data.message ?? "")

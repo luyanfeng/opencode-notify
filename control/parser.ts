@@ -10,7 +10,7 @@ import { ITEM_TOKEN_RE, INDEX_RE, isRef } from "./tokens.js"
  *
  * 显式回复协议（不做类型猜测）：
  *   - **动词开头** → 按动词语义（含 approve/always/deny/answer/select/say/stop/status/help）。
- *     无动词简写已废除：`parseCommand("2")` 直接报「未知动词: 2」。
+ *     无动词文本不猜：`parseCommand("2")` 报「未知动词: 2」。
  *   - **select 的参数**是本协议的分支点：纯数字 → 选该提问第 n 个选项；其它文字 → 当自由回答。
  *   - **其它无动词文本** → 解析失败（controller 据此回执语法提示，绝不猜成某类动作）。
  *
@@ -63,7 +63,7 @@ const VERBS: Record<string, { action: Action; needsText: boolean }> = {
   "指令": { action: "say", needsText: true },
   "追加": { action: "say", needsText: true },
   // select：选该提问第 n 个选项（凭证强制协议的标准写法）
-  // 只有 select 一个入口，不再收 option/选择/选项 同义词：命令越少越不容易记错
+  // 只有 select 一个入口，命令越少越不容易记错
   select: { action: "choose", needsText: false },
   // stop
   stop: { action: "stop", needsText: false },

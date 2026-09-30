@@ -176,10 +176,7 @@ export class PermissionAlreadySettledError extends Error {
 /**
  * opencode 宿主能力桥（V2）
  *
- * V1 时代靠"从注入 client 提取 fetch/headers 自建 v2 SDK client"来应答；
- * V2 插件 ctx 直接提供 `ctx.permission` / `ctx.session` 域，无需自建 client，
- * 也因此不再受"直跑模式不监听端口、serverUrl 是死地址"的困扰。
- *
+ * 插件 ctx 直接提供 `ctx.permission` / `ctx.session` 域。
  * 本接口是该能力的**窄化视图**：由 index.ts 用 ctx 实现，control/ 层只依赖它，
  * 从而 control/ 不直接耦合 opencode 的类型包。
  */

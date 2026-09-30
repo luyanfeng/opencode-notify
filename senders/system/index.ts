@@ -56,7 +56,7 @@ export class SystemSender implements Sender {
  * - macOS:  osascript -e JSON 序列化 — 全自动处理
  * - Windows: PowerShell '${title}' — 只需转义单引号（win32.ts 内部处理）
  *
- * 注意：不再主动移除换行符，Linux notify-send 原生支持换行显示。
+ * 不主动移除换行符：Linux notify-send 原生支持换行显示。
  */
 function sanitize(
   title: string,
