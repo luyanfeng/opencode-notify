@@ -80,8 +80,8 @@ process-singleton.ts (进程级单例：每 location 一实例 → 只留最新�
 index.ts (服务端插件入口, exports ".") → events.ts route() → message.ts enrich/format
        ↓
 dispatcher.ts (即时) + delayed-dispatcher.ts (远程延迟)
-       ↓
-senders/ 各渠道：system(跨平台原生) / screen-flash(X11跑马灯) / wechat-work / feishu / ntfy(带按钮) / gotify / custom-webhook(命名多配置)
+       ↓ 两条路径各自经 text-format.ts 的 clampBodyBytes（3600 字节，保尾的令牌行）
+senders/ 各渠道：system(跨平台原生，只发 事件/会话/时间/输入/输出 五行) / screen-flash(X11跑马灯，忽略正文) / wechat-work / feishu / ntfy(带按钮) / gotify / custom-webhook(命名多配置)
 
 control/ (手机 → 插件 → opencode 应答，仅出站连接；配置在 channels.*.reply)
   controller.ts (命令执行 + 令牌隔离 + 按钮编排 + 凭证门卫)
@@ -100,6 +100,8 @@ tui.ts (TUI/CLI 插件入口, exports "./tui"，由 CLI 自动加载，跑在终
     手机应答提问：ntfy → index.ts → RPC events.request → tui.ts → form.reply → methods.confirm → index.ts
 ```
 
+- `text-format.ts`：正文分渠道改写的公共件 —— `stripInlineBold`（去字面 `**`，给纯文本渠道） / `bodyWithReplyHint`（把 `replyHint` 追加到正文，除 ntfy 外各渠道都用） / `clampBodyBytes`（3600 字节兜底，**保尾**的令牌行，UTF-8 字节不切半个字符）。
+- **多渠道正文渲染分治**（同一份 `msg.body` 到各渠道会被改写，勿只看 ntfy）：ntfy `markdown: true` 保留粗体 + 唯一渲染 Actions 按钮；企业微信 `msgtype: markdown` 保留粗体；飞书 `escapeMarkdown` **故意不转义 `*`**（转义后整张卡片全是 `\*\*事件：\*\*`），但 `` ` `` `_` `#` `]` 仍转义；gotify / custom-webhook `stripInlineBold`；**system_message 只发 `事件/会话/时间/输入/输出` 五行**（原生横幅短、OS 会截断，令牌/选项/回复提示一律不进 —— 新增正文 key 行时要同步 `senders/system/index.ts` 的白名单正则）；screen_flash 完全忽略正文。
 - `session-tracker.ts`：会话活跃/空闲追踪、用户输入与助手回复累积，驱动抑制与延迟推送取消。
 - `terminator-detect.ts`：Terminator 子屏遮挡检测（需 `TERMINATOR_UUID` 环境变量，检测结果 5s TTL 缓存防高频 `execSync`）。
 - `store.ts`：文件持久化去重（1s 防抖写盘）+ 跨进程 O_EXCL 按键占位（见下）。

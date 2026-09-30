@@ -55,6 +55,27 @@
 > 提交给宿主的回传值不受截断影响），`fields[i].title/description` 也仍按原值登记待处理条目。
 > ntfy 服务端消息硬限 4095 字节，超限直接 500 → 通知彻底丢失，所以这几个字段必须先截。
 
+### 多渠道正文渲染差异
+
+同一份 `msg.body` 到各渠道会被改写，**别只看 ntfy 就以为其它渠道一样**：
+
+| 渠道 | 粗体 `**` | 回复提示行 | 说明 |
+|---|---|---|---|
+| ntfy | 保留（`markdown: true`，goldmark） | 有 | 唯一把 `controlButtons` 渲染成 **Actions 按钮**的渠道 |
+| 企业微信 | 保留（`msgtype: markdown`） | 有 | — |
+| 飞书 | 保留（`escapeMarkdown` 故意不转义 `*`） | 有 | `` ` `` `_` `#` `]` 仍转义 |
+| gotify / custom_webhook | 剥离（`stripInlineBold`） | 有 | 纯文本目标，避免看到字面 `**` |
+| system_message | 剥离 | **无** | 只保留 `事件/会话/时间/输入/输出` 五行 |
+| screen_flash | — | — | 完全忽略正文，只跑马灯 |
+
+> ⚠️ **system_message 只发那五行**（`senders/system/index.ts` 按 `^\*\*(事件|会话|时间|输入|输出)：\*\*`
+> 逐行过滤）：原生横幅短、OS 会截断长正文，令牌行/选项/回复提示既放不下也用不上，
+> 一律不进系统通知（这些在 ntfy 上完整保留）。**新增正文 key 行时要同步这个白名单**。
+>
+> ⚠️ **长度兜底在 dispatcher 层**（`text-format.ts:clampBodyBytes`，3600 字节、保尾的令牌行），
+> 只钳 `msg.body` 不动 `replyHint`；`index.ts` 把同一对象先 `dispatch()` 再 `schedule()`，
+> 而 `DelayedDispatcher` 会就地改写 `msg.body` → 两处钳制都返回**浅拷贝**。
+
 ---
 
 ## 测试用例
@@ -102,12 +123,19 @@ data:
 
 **启用远程控制时（同一输入，本例无 options 故无 `选项：` 块）：**
 ```
+标题: 要读取文件 /home/lyf/xxx 吗
+**事件：**「Agent 向您提问」
+**会话：** ses_xxx
+**时间：** {current_time}
 **输入：** 要读取文件 /home/lyf/xxx 吗
 **令牌：** oc-xxxx-xxxxxx
 **回复:** select <令牌> 文字=自由回答
 ```
 > `输入：` 行取 `fields[i].description`，缺失则退回 `fields[i].title`；两者都空才是「请做出选择」。
 > `fields[i].title` 与 `输入：` 内容**相同**时不追加 `问题：` 行（避免同一句话出现两次）。
+> ⚠️ 启用远程控制时 form 分支会**一并覆盖两处**（都在 `index.ts` 的 `if (item.code)` 内，
+> 所以上面两段「未启用」的 route 基线仍成立）：`事件：` 行改成「Agent 向您提问」、
+> 标题改成真问题原文（去掉默认的 `opencode - 需要授权`）。
 
 ---
 
@@ -339,6 +367,10 @@ data:
 
 `sessionTopic` 为空时（尚未收到 `session.created` / `session.renamed` 的标题）：
 
+> 下例取 `permission.asked` 且无 `action`/`message`/`resources` 时的回退基线。
+> `form.created` 的同条件回退见 TC2 —— 两者的事件行文案相同，都是 `defaultBody("permission_required")`；
+> **只有在启用远程控制时** form 分支才把它改成「Agent 向您提问」（见 TC1）。
+
 ```
 标题: opencode - 需要授权
 **事件：**「Agent 需要您的授权许可」
@@ -387,7 +419,7 @@ data:
 
 ---
 
-### TC12: 远程控制附注（仅 ntfy 渠道）
+### TC12: 远程控制附注（令牌行 + 回复提示行）
 
 `index.ts` 对**每条**通知追加回复提示行（`回复:`），权限/提问额外追加令牌行与按钮。
 这些行直接跟在 `输出：` 行之后（**插件不加分隔空行**；若看到空行，那是助手输出内容
@@ -417,7 +449,7 @@ data:
 **提问（form）通知** —— 显示真问题（`fields[i].title`）+ 补充说明（`fields[i].description`，
 即 `输入：` 行的来源），并列出每个选项及其说明（`options[j].description`，截 80）：
 ```
-**事件：**「Agent 需要您的授权许可」
+**事件：**「Agent 向您提问」
 **会话：** ses_f13d6126effevCJiTtPcujcX5e
 **时间：** 2026/9/29 15:58:36
 **输入：** 确认粗体渲染
