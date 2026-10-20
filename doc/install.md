@@ -88,8 +88,15 @@ bun add @freely01/opencode-notify
 | 平台 | 依赖 | 备注 |
 |------|------|------|
 | **Ubuntu 24.04 X11** | Python 3 + PyGObject（GTK 3） | Ubuntu 桌面版内置 |
+| **Ubuntu 24.04 Wayland** | 同上 + **XWayland**（`DISPLAY` 须有值） | 插件自动为子进程设 `GDK_BACKEND=x11`；GTK3 的 Wayland 后端画不出顶层覆盖层 |
 | **Windows** | PowerShell + .NET WinForms | 系统内置 |
 | **macOS** | — | 暂不支持 |
+
+> **Wayland 下跑马灯看不到？** GTK3 的 Wayland 后端不支持 override-redirect 顶层覆盖层，
+> 窗口能创建但用户看不见。插件检测到 `WAYLAND_DISPLAY` 且 `DISPLAY` 有值时会强制
+> 子进程走 XWayland 的 X11 后端（实测可见）。若日志提示
+> 「Wayland 会话且无 XWayland」，说明当前会话没开 XWayland，跑马灯无法显示
+> （系统通知等其它渠道不受影响）。
 
 ### Terminator 子屏遮挡检测
 

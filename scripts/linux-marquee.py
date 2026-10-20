@@ -47,7 +47,16 @@ class MarqueeWindow(Gtk.Window):
         # 获取主显示器尺寸
         screen = Gdk.Screen.get_default()
         display = screen.get_display()
-        monitor = display.get_primary_monitor() if display else screen.get_monitor(0)
+        # ⚠️ Wayland 的 GDK 后端没有 "primary monitor" 概念，get_primary_monitor()
+        #    返回 None → 直接 get_geometry() 会 AttributeError 让整个脚本崩掉。
+        #    逐级回退：primary → 第一个 monitor → screen.get_monitor(0)。
+        monitor = None
+        if display is not None:
+            monitor = display.get_primary_monitor()
+            if monitor is None:
+                monitor = display.get_monitor(0)
+        if monitor is None:
+            monitor = screen.get_monitor(0)
         geo = monitor.get_geometry()
         self.screen_w = geo.width
         self.screen_h = geo.height

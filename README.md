@@ -113,6 +113,10 @@ screen_flash:
 
 ![跑马灯效果](doc/de.png)
 
+> **Wayland 用户注意**：跑马灯是覆盖在屏幕最上层的窗口，需要 X11 后端才能显示。
+> 插件在 Wayland 会话下会自动走 XWayland（要求 `DISPLAY` 有值），
+> 无 XWayland 时只有跑马灯失效，其它渠道正常。详见 [doc/install.md](doc/install.md)。
+
 ### 自定义 Webhook
 
 通用 HTTP 发送器，支持 Gotify / Bark / PushDeer / Slack / Discord 等。
