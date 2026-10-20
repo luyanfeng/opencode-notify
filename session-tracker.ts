@@ -141,7 +141,22 @@ export class SessionTracker {
     return info ? isBackgroundSession(info) : false
   }
 
-  /** 补记父子关系（兜底：session.created 未带 parentID 时从 session.updated 记录） */
+  /** 取已记录的父会话 ID（未登记则 undefined） */
+  getParentID(sessionID: string): string | undefined {
+    if (sessionID === "unknown") return undefined
+    return this.sessions.get(sessionID)?.parentID
+  }
+
+  /**
+   * 补记父子关系。
+   *
+   * ⚠️ opencode 2.0.32 不发 `session.created` 事件，父子关系靠
+   * `ctx.session.get` 兜底查询后调本方法登记。
+   *
+   * 注意：登记时**不刷新 lastActivity** —— 那是"用户最近操作时间"，
+   * 用 Date.now() 会让刚登记的会话立刻被判定为活跃（默认 60s 窗口），
+   * 反而把本该发的通知抑制掉。lastActivity 缺失时按 0 处理（视为不活跃）。
+   */
   setParent(sessionID: string, parentID: string): void {
     if (sessionID === "unknown" || !parentID) return
     const existing = this.sessions.get(sessionID)
@@ -150,7 +165,7 @@ export class SessionTracker {
     } else {
       this.sessions.set(sessionID, {
         sessionID,
-        lastActivity: Date.now(),
+        lastActivity: 0,
         createdAt: Date.now(),
         parentID,
       })

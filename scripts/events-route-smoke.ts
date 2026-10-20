@@ -15,6 +15,7 @@
  */
 import { route } from "../events.js"
 import type { V2Event } from "../events.js"
+import { SessionTracker } from "../session-tracker.js"
 import { configureLog } from "../log.js"
 
 configureLog("off")
@@ -148,13 +149,52 @@ function testExecutionInterrupted() {
 // ── idle：route() 不负责 run_completed ──────────────────────────────────────
 
 function testIdleNotRouted() {
-  console.log("\n▶ idle 事件：run_completed 由 index.ts 状态机合成")
+  console.log("\n▶ idle / succeeded 事件：run_completed 由 index.ts 合成")
   const a = route({ type: "session.idle", data: { sessionID: "ses_1" } }, ALL)
   assert(a === null, "session.idle → route() 返回 null")
   const b = route({ type: "session.status", data: { sessionID: "ses_1", status: { type: "idle" } } }, ALL)
   assert(b === null, "session.status(idle) → route() 返回 null")
   const busy = route({ type: "session.status", data: { sessionID: "ses_1", status: { type: "busy" } } }, ALL)
   assert(busy === null, "session.status(busy) → null")
+
+  // ⚠️ opencode 2.0.32 不发 session.idle / session.status，
+  //    run_completed 改由 session.execution.succeeded 驱动（index.ts 合成）。
+  //    route() 对它必须返回 null，否则 index.ts 的合成分支永远走不到。
+  const ok = route({ type: "session.execution.succeeded", data: { sessionID: "ses_1" } }, ALL)
+  assert(ok === null, "session.execution.succeeded → route() 返回 null（交由 index.ts 合成）")
+}
+
+// ── 子会话判定（tracker）────────────────────────────────────────────────────
+
+function testChildSessionDetection() {
+  console.log("\n▶ 子会话判定：parentID 兜底与活跃时间不被刷新")
+  const tracker = new SessionTracker(600_000)
+
+  // 未登记 → 非子会话
+  assert(!tracker.isBackground("ses_child"), "未登记的会话 → 非子会话")
+  assert(tracker.getParentID("ses_child") === undefined, "未登记的会话 → 无 parentID")
+
+  // 登记父子关系后 → 是子会话
+  tracker.setParent("ses_child", "ses_parent")
+  assert(tracker.isBackground("ses_child"), "setParent 后 → 判定为子会话")
+  assert(tracker.getParentID("ses_child") === "ses_parent", "setParent 后 → 可取回 parentID")
+
+  // ⚠️ setParent 不得刷新 lastActivity：否则刚登记的子会话立刻被判定为活跃
+  //    （默认 60s 窗口），把本该发的通知抑制掉。
+  assert(
+    !tracker.isSessionActive("ses_child", 60_000),
+    "setParent 不刷新活跃时间 → 不被误判为活跃",
+  )
+
+  // 父会话不是子会话
+  assert(!tracker.isBackground("ses_parent"), "父会话 → 非子会话")
+
+  // 活跃会话确实会被判定为活跃（对照组）
+  tracker.markActivity("ses_parent")
+  assert(
+    tracker.isSessionActive("ses_parent", 60_000),
+    "markActivity 后 → 被判定为活跃（对照组）",
+  )
 }
 
 // ── 不关心的事件 ────────────────────────────────────────────────────────────
@@ -175,6 +215,7 @@ testPermissionAsked()
 testExecutionFailed()
 testExecutionInterrupted()
 testIdleNotRouted()
+testChildSessionDetection()
 testUnrelated()
 
 console.log("\n" + "═".repeat(60))

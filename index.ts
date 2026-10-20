@@ -112,6 +112,29 @@ export default Plugin.define({
         }
       }
 
+      /**
+       * 解析会话的 parentID（子会话归属的父会话 ID）。
+       *
+       * ⚠️ opencode 2.0.32 **不发 `session.created` 事件**（实测事件流里只有
+       * session.execution.* / session.inbox.* / session.text.* / session.step.* 等），
+       * 所以 tracker.register(sessionID, parentID) 那条路拿不到父子关系，
+       * `isBackground()` 恒为 false。
+       *
+       * 兜底：`ctx.session.get({sessionID})` 返回的会话信息里带 parentID
+       * （实测该 API 不受 location 门控，可读其它目录的会话）。
+       *
+       * 用途：判定"这是不是子会话（background task）"，决定 run_completed 该不该发。
+       */
+      const resolveParentID = async (sessionID: string): Promise<string | undefined> => {
+        if (sessionID === "unknown") return undefined
+        try {
+          const s = await ctx.session.get({ sessionID })
+          return (s as unknown as { parentID?: string })?.parentID
+        } catch {
+          return undefined
+        }
+      }
+
       const bridge: OpencodeBridge = {
         // 路由：按会话所属 location 找目标实例 → 以**它的**名义应答
         replyPermission: async (i) => {
@@ -190,9 +213,18 @@ export default Plugin.define({
         }
 
         // 子会话（background task）：只保留授权/提问通知，完成/取消/失败均静默
-        if (tracker.isBackground(sessionID) && msg.event !== "permission_required") {
-          debug(`→ 子会话(background task) ${sessionID} 跳过通知 (${msg.event})`)
-          return
+        // ⚠️ parentID 事件流里没有（2.0.32 不发 session.created），首次遇到该会话时
+        //    用 ctx.session.get 兜底登记，否则 isBackground() 恒为 false、
+        //    子会话的完成通知会漏出去。
+        if (msg.event !== "permission_required") {
+          if (!tracker.isBackground(sessionID)) {
+            const parentID = await resolveParentID(sessionID)
+            if (parentID) tracker.setParent(sessionID, parentID)
+          }
+          if (tracker.isBackground(sessionID)) {
+            debug(`→ 子会话(background task) ${sessionID} 跳过通知 (${msg.event})`)
+            return
+          }
         }
 
         // 会话感知抑制判定
@@ -240,7 +272,9 @@ export default Plugin.define({
           const dataKeys = Object.keys(data).join(",")
 
           // 调试日志：记录所有事件
-          debug(`[event] type=${type} keys=${dataKeys}`)
+          // ⚠️ 必须带上 sessionID：否则父子会话的完成事件在日志里无法区分，
+          // 排障时看不出「哪个会话完成了」（session.execution.* 只带 sessionID）。
+          debug(`[event] type=${type} session=${String((event.data as Record<string, unknown> | undefined)?.sessionID ?? "-")} keys=${dataKeys}`)
 
           const sessionID = (data.sessionID as string) ?? "unknown"
 
@@ -328,25 +362,41 @@ export default Plugin.define({
           // 先路由事件，看是否匹配通知（run_failed / run_cancelled 由原生事件驱动）
           let msg = route(event, cfg.events)
 
-          // idle 事件：由会话状态机处理 run_completed。
-          // 注：V2 另有原生 `session.execution.succeeded`，但它按 session 的 execution
-          // 结算，未验证是否等价于这里"所有子会话都跑完"的语义，故保留已验证的状态机。
+          // run_completed 的产生条件。
+          //
+          // ⚠️ opencode 2.0.32 **不发 `session.idle` / `session.status(idle)`**
+          // （实测事件流只有 session.execution.* / session.inbox.* / session.text.* /
+          //  session.step.* / session.reasoning.* 等），所以旧的"idle 状态机"
+          // 永远等不到触发条件 → run_completed 从未产生过（跨 2.0.18~2.0.32
+          // 共 9 个宿主版本，分发次数恒为 0）。
+          //
+          // 现改用原生 `session.execution.succeeded`。它是否等价于"所有子会话
+          // 都跑完"？**实测是等价的，且方向与旧结论相反**：
+          // 用 session.list API 交叉比对 19 对父子会话的 time.idle，
+          // **父会话 idle 永远晚于子会话（19/19，无一例外）** ——
+          // 宿主本身就是等子会话全部结束才结算父会话。
+          //
+          // 方案 A：只有**顶层会话**（无 parentID）完成才发 run_completed；
+          // 子会话（background task）完成时静默，等父会话完成时统一发一次。
+          const isExecutionSucceeded = type === "session.execution.succeeded"
+          // 兼容旧宿主：session.idle / session.status(idle) 仍保留分支
           const isIdle = type === "session.idle"
             || (type === "session.status" && (data.status as { type?: string } | undefined)?.type === "idle")
 
-          if (!msg && isIdle) {
+          if (!msg && (isExecutionSucceeded || isIdle)) {
             if (cfg.events?.includes("run_completed")) {
-              // 子会话 idle → 跳过（background task 完成，静默）
-              if (tracker.isBackground(sessionID)) {
-                debug(`→ 子会话 ${sessionID} idle, 跳过`)
+              // 判定是否子会话（background task）：parentID 事件流里没有，
+              // 用 ctx.session.get 兜底（2.0.32 实测 session.created 不发）。
+              const parentID = tracker.isBackground(sessionID)
+                ? tracker.getParentID(sessionID)
+                : await resolveParentID(sessionID)
+              if (parentID) {
+                // 补记父子关系，让后续 isBackground / hasActiveChildren 生效
+                tracker.setParent(sessionID, parentID)
+                debug(`→ 子会话 ${sessionID} 完成 (parent=${parentID}), 跳过`)
                 return
               }
-              // 主会话 idle 但仍有子会话在跑 → 跳过
-              if (tracker.hasActiveChildren(sessionID)) {
-                debug(`→ 主会话 ${sessionID} idle 但子会话活跃中, 跳过`)
-                return
-              }
-              // 全部任务完成 → run_completed
+              // 主会话完成 → run_completed
               debug(`→ 全部任务完成 (${sessionID}), 发送 run_completed`)
               msg = {
                 agent: "opencode",

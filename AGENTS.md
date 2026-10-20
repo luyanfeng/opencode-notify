@@ -43,9 +43,13 @@ opencode 通知插件（TypeScript，Bun 运行，opencode 2.x 插件）。监�
 - ⚠️ **提问正文的展示字段有长度上限**（`index.ts` 的 `clampDisplay`：title 100 / description 200 / label 30 / desc 80）——ntfy 硬限 4095 字节，超限直接 500 → **通知彻底丢失**。截断只发生在拼正文；`options`/`optionValues`/`optionDescs` 三个数组**必须原样且等长**（按下标取回传值，错位就提交错答案；提交用 `optionValues[i]`，不能是 label）。
 - ⚠️ **正文选项编号不带 `#`**（写 `**1 红色**`）：回复语法是 `select <令牌> N`，`#1` 不匹配 `/^\d+$/`，会被当自由回答提交并消费令牌 → 静默错答。
 - **`form.created` 的真实结构**（实测 2.0.19）：`form.title` 恒为占位 `"Questions"`，真问题在 `fields[i].title`、补充说明在 `fields[i].description`、选项在 `fields[i].options[j]`；`formID = data.form.id`，**会话 ID 在 `data.form.sessionID`**（不在 `data.sessionID`），`location.directory` 在**事件顶层**。事件被映射成 `permission_required`，要区分权限/提问只能看原始 `type`。
-- **`run_completed` 不在 `events.ts` 生成**，由 `index.ts` 会话状态机合成（`session.idle`/`session.status(idle)` + `hasActiveChildren()`）。**已定论，勿再考证**：原生 `session.execution.succeeded` 按单 session 结算、不等子会话，不能替代。
+- **`run_completed` 由原生 `session.execution.succeeded` 驱动**（`index.ts`）：⚠️ opencode 2.0.32 **不发 `session.idle` / `session.status(idle)` / `session.created`**（实测事件流只有 `session.execution.*` / `session.inbox.*` / `session.text.*` / `session.step.*` / `session.reasoning.*`），旧的 idle 状态机永远等不到触发 → `run_completed` 跨 2.0.18~2.0.32 共 9 个版本**分发次数恒为 0**。
+  - **父子顺序（实测，勿再质疑）**：用 `session.list` API 交叉比对 19 对父子会话的 `time.idle`，**父会话 idle 永远晚于子会话（19/19，无例外）**——宿主本身等子会话全部结束才结算父会话。旧文档写的"原生 succeeded 不等子会话、不能替代"是**错的**（那是 `session.idle` 还在时的结论）。
+  - **方案 A**：只有**顶层会话**（无 parentID）完成才发 `run_completed`；子会话（background task）完成时静默，等父会话完成统一发一次。
+  - **`parentID` 事件流里没有** → 用 `ctx.session.get({sessionID})` 兜底取（实测该 API 不受 location 门控，返回含 `parentID`），再 `tracker.setParent()` 登记。`session.created` 不发，所以 `tracker.register(sessionID, parentID)` 那条路拿不到父子关系。
+  - ⚠️ **`tracker.setParent()` 不得刷新 `lastActivity`**：那是"用户最近操作时间"，用 `Date.now()` 会让刚登记的子会话立刻被判定为活跃（默认 60s 窗口），反而把本该发的通知抑制掉。已登记但未活跃的会话按 `lastActivity: 0` 处理。
 - **`run_cancelled` 只对 `reason === "user"` 通知**（`events.ts` 的 `NOTIFIABLE_INTERRUPT_REASONS`），`shutdown`/`superseded`/`inactivity` 静默且**绝不降级成 `run_failed`**。
-- **子会话（background task，有 parentID）只通知 `permission_required`**，完成/失败/取消全静默（`index.ts` 的 `finishNotification` 开头）。
+- **子会话（background task，有 parentID）只通知 `permission_required`**，完成/失败/取消全静默（`index.ts` 的 `finishNotification` 开头）。⚠️ 该守卫依赖 `parentID`，而 `session.created` 不发 → **必须靠 `ctx.session.get` 兜底登记**（见上面 `run_completed` 条），否则 `isBackground()` 恒为 false、子会话的完成通知会漏出去。
 
 ## 远程控制（凭证强制协议，用户明确要求，勿回退）
 
