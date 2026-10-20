@@ -1,115 +1,120 @@
 # AGENTS.md
 
-opencode 通知插件（TypeScript，运行于 Bun）。监听 opencode 会话事件，通过多渠道推送通知。
+opencode 通知插件（TypeScript，Bun 运行，opencode 2.x 插件）。监听会话事件 → 多渠道推送；手机可经 ntfy/Gotify 反向应答权限与提问。
 
 ## 命令
 
-- 类型检查（唯一的验证手段，无测试/lint/build 脚本）：`npx tsc --noEmit`（已含 `scripts/**/*.ts`）
-- CLI 诊断（bin 指向 cli.ts）：`bun cli.ts check` / `bun cli.ts test [channel]` / `bun cli.ts log [lines]` / `bun cli.ts info`
-- 本地冒烟（无需网络/opencode）：
-  - `bun scripts/control-stream-smoke.ts` — 流式 provider（收消息/断线补漏/400重置/看门狗/401熔断/bot_tag 过滤）
-  - `bun scripts/control-protocol-smoke.ts` — 协议层（数字协议/配置合并/按钮编排/sessions）
-  - `bun scripts/events-route-smoke.ts` — **事件映射**（`route()` 对 V2 各事件的输出 + interrupted reason 过滤）
-  - `bun scripts/form-reply-bridge-smoke.ts` — **表单应答桥**（服务端侧：注册/成功确认/失败/超时/同 formID 复用/无等待者确认/dispose/派发失败）
-  - `bun scripts/control-credential-sharing-smoke.ts` — **凭证共享**（进程级共享：owner 变更/热重载/跨进程隔离/配置指纹重建+迁移/裁剪/静默语义）
-  - `bun scripts/instance-registry-smoke.ts` — **实例注册表**（登记/注销/同名覆盖/归属校验/多 location 隔离/不串台）
-  - `bun scripts/permission-routing-smoke.ts` — **授权应答路由决策**（目标无实例→未打开/宿主 not found→已结算/其它错误不误判/路由不串台/hint 与兜底）
-- 真实 ntfy 集成（需运行时配置，会推手机通知）：
-  - `bun scripts/ntfy-integration.ts tags|preview|copy|actions`（⚠️ token 通常按话题授权，只能用配置里的 `topic`，随机话题会 403）
-- ⚠️ `test` 的渠道名取**配置键**：`system_message` / `wechat_work` / `feishu` / `custom_webhook`。帮助/报错里写的 `system` 实际匹配不到任何渠道（`cli.ts:195` 注册名是 `system_message`）。
-- 运行时：`bun`。不要用 `node` 直接跑入口文件。
-- 插件加载时自动写日志：`~/.opencode-notify/plugin.log`；去重状态文件 `~/.opencode-notify/state.json`。
+- 类型检查（无 test/lint/build 脚本，TS 层面只此一招）：`npx tsc --noEmit`
+  （会先打印几行 npm info 噪音，看 exit code；`tsconfig.json` 已含 `scripts/**/*.ts`）
+- CLI 诊断（bin 指向 `cli.ts`，用 bun 跑，别用 node）：
+  `bun cli.ts check` / `bun cli.ts test [channel]` / `bun cli.ts log [n]` / `bun cli.ts info`
+  - `test` 的渠道名取**配置键**：`system_message` / `ntfy` / `gotify` / `wechat_work` / `feishu` / `custom_webhook` 下的自定义名。`screen_flash` 不在 test 名单内。
+  - `test` 会**真发**一条样例通知到已启用渠道（ntfy/企业微信会推到手机、群）。只改了渲染逻辑以外的东西时别顺手跑。
+- 本地冒烟（无需网络/opencode，全部应 exit 0；改对应模块后跑对应脚本）：
+  - `bun scripts/control-protocol-smoke.ts` — 协议解析 / 配置合并 / 按钮编排 / 令牌生命周期
+  - `bun scripts/control-stream-smoke.ts` — 流式 provider（mock ntfy：重连补漏、400 重置、看门狗、401 熔断、bot_tag 过滤）
+  - `bun scripts/events-route-smoke.ts` — `route()` 事件映射 + interrupted reason 过滤
+  - `bun scripts/form-reply-bridge-smoke.ts` — 服务端表单应答桥（确认/失败/超时/复用/dispose）
+  - `bun scripts/control-credential-sharing-smoke.ts` — 进程级凭证共享 + 指纹重建/裁剪
+  - `bun scripts/instance-registry-smoke.ts` — location → 实例注册表
+  - `bun scripts/permission-routing-smoke.ts` — 授权应答路由决策
+  - `bun scripts/screen-flash-smoke.ts` — 跑马灯显示后端选择（Wayland→XWayland）+ 脚本语法自检
+- 真实 ntfy 集成（**会推手机通知**，需运行时配置）：`bun scripts/ntfy-integration.ts tags|guard|gate|loopback|preview|copy|actions`
+  （token 通常按话题授权，只能用配置里的 `topic`，随机话题 403）
+- 运行期产物：`~/.opencode-notify/plugin.log`、`state.json`、`claims/`。
+
+## 打包/发布（当前有坑）
+
+- ⚠️ **`package.json` 的 `files` 白名单漏了 `control/`**：`"*.ts"` 只匹配根目录，`senders/` 是显式加的。
+  已核验：`npm pack` 出来的 0.8.2 tarball 没有 `control/`，`index.ts` 一加载就
+  `Cannot find module './control/instance-registry.js'`。新增顶层目录必须显式加进 `files`。
+- 改 `files` 后用 `npm pack --dry-run` 核对清单，别凭感觉。
+- `scripts/*.ts` 被 `!scripts/*.ts` 排除（冒烟脚本不进包），但 **`scripts/linux-marquee.py` 必须保留**——`senders/screen-flash/linux.ts` 按相对路径 spawn 它。
+- 发布只走 npm（README 明确不再发 GitHub Release）；版本号写 `package.json`，历史 tag 形如 `v0.8.1`。
+- 两个 lockfile 并存且都与 `package.json` 不同步：`package-lock.json` 版本号仍是 0.8.1，`bun.lock` 里包名是旧的 `opencode-notify`、依赖写的是 `@opencode-ai/plugin`（代码实际 import `@opencode/plugin`）。`node_modules` 是 npm 装的，别用 `bun install` 覆盖。
 
 ## 关键约定（容易踩坑）
 
-- **导入用 `.js` 后缀，但文件是 `.ts`**。`package.json` 声明 `"type": "module"`，全库 import 都是 `./x.js` 指向 `x.ts`（Bun 运行、`tsc` 用 `moduleResolution: bundler` 解析）。不要"修正"成 `.ts`。
-- **"输出"字段长度 = 2 处共同决定**：`session-tracker.ts`（`appendAssistantText` 按 `BUCKET_MAX_BYTES=3072` 累积+从头部截断、`freezeAssistantSummary` 冻结）→ `message.ts:130` `enrich`（`shortTitle(assistantSummary, 500)` 最终截断）。想改通知里的输出内容长度改 `message.ts:130` 即可；"输入"行另走用户输入侧（`index.ts:205` 源头 `slice(0, 1000)`，标题取前 16 字、正文取前 80 字）。
-- **`run_completed` 不在 `events.ts` 里生成**，由 `index.ts` 的会话状态机（`session.idle`/`session.status(idle)` + 子会话追踪）合成。⚠️ V2 另有原生 `session.execution.succeeded`，**已考证并确认不能替代这套状态机**（勿再反复考证，直接维持现状）：① 宿主的 `SessionExecution`（`class Rd extends K()("@opencode/SessionExecution")`）**按 sessionID 独立结算**（`settled` 只 drain 该 sessionID 自己的 inbox），**不等子会话**；宿主自己的通知逻辑也印证这点 —— `Sr(t,p,"Session done", D?.parentID?"subagent_done":"done")`，即子会话各发各的 `succeeded`，只是换了个更安静的音效 + `notification:false`。而 `session.execution.succeeded` 恰恰**不含** `hasActiveChildren()` 提供的"等所有子会话跑完"语义。② `session.idle` 本就是由三个终态事件派生的（宿主 `case "session.execution.succeeded"/"failed"/"interrupted": v(sessionID,"idle")`），现有状态机已完整覆盖 `succeeded`。改事件映射先看 `events.ts` 注释 + `index.ts`。
-- **`run_cancelled` 只对 `reason === "user"` 通知**（`events.ts` 的 `NOTIFIABLE_INTERRUPT_REASONS`），`shutdown`/`superseded`/`inactivity` 一律静默且**绝不降级成 `run_failed`**。依据：宿主的结算判定 `n0()` 里 `reason:"user"` 对应 `AbortError`（= V1 `MessageAbortedError` 口径），`shutdown` 来自 abort 信号（opencode 关闭/重载），而 `shutdown` 被宿主**两处特殊排除** —— SQL 层 `if (type===Interrupted && reason==="shutdown") return;`（不写 `idle_outcome`）、通知层走独立分支。要放宽只需改那个 Set。
-- **`form.created`（提问）在 `events.ts` 里也被映射成 `permission_required`**：需要区分权限与提问时，必须按原始 `type` 判断，不能只看 `msg.event`（`index.ts` 的待处理登记就这么做）。⚠️ `form.created` 的会话 ID 在 `data.form.sessionID`，**不在** `data.sessionID`。
-- **opencode 2.x 提问 = 权限闸 + form，无 question 事件**：宿主 `question` 工具（`ctx.tool.list()` 实测 `id` 就是 **`question`**，不是文档早先误写的 `opencode.tool.question`）先 `Permission.assert({action:"question"})`，通过后 `form.ask({title:"Questions", fields:[{key:"q0"},{key:"q1"}…]})`，答案按 `form.answer["q0"]` 读取（`multiple:true` 时值是 `string[]`）。V1 的 `question.asked/replied/rejected` 三个事件在 2.x **已完全不存在**，`pending.kind` 的 `"question"` 随之改名为 `"form"`。
-- **✅ 2.x 提问（form）应答已打通：同包 `./tui` 入口 + RPC 回调确认（机制与实证见 `doc/v2-plugin-form-mechanism.md`）**：`form.reply` 不在服务端插件 ctx（`Context` 无 `form` 域、`SessionDomain` 的 `Pick` 未含、运行时白名单字面量 `adapter.js:417-432`），而在 **TUI/CLI 插件上下文**（`@opencode/plugin/tui` → `context.data.session.form.reply(input, location)`，入参 `{sessionID, formID, answer}`）。实现：
-  - **两个入口**：`index.ts`（服务端，包名 `.`）+ `tui.ts`（终端，`exports["./tui"]`）。暴露 `./tui` 的包由 CLI **自动加载**（官方《CLI plugins》：*"loaded automatically by the CLI"*，**无需**在 `cli.json` 登记）——已实测：CLI 侧插件对账 `plugins=13→14`。
-  - **契约**：`form-reply-rpc.ts` 定义 `events.request`（服务端→TUI）与 `methods.confirm`/`methods.ping`（TUI→服务端），两端**共用同一 definition 对象**（各写一份会在运行时静默失配）。
-  - **⚠️ RPC 注册按 location 作用域（实测踩坑）**：只由单个实例注册时，位于其它目录的 TUI 调 `client.rpc(D)` 会得到 `rpc.unavailable`。因此**每个实例都要注册自己那份**（放在单例 `activate` 之外）；而**等待表必须放 `globalThis`**（`form-reply-bridge.ts` 的 `__opencodeNotifyFormReplyWaiters__`），因为 TUI 的 `confirm` 会打到它自己 location 的实例，可能是任意一个。
-  - **结果判定**：`FormReplyBridge`（`form-reply-bridge.ts`）派发后**等 `confirm`**（超时 `form_reply_timeout_ms`，默认 5000）：`ok:true`→成功（消费令牌）；`ok:false`→抛 `FormReplyFailedError`（回执原因、保留令牌）；超时→抛 `FormReplyTimeoutError`（回执「当前没有终端客户端在运行，请回电脑处理」、保留令牌）。**必须等确认**：RPC 事件即发即忘且订阅是实时连接，不等就无法区分「没人处理」与「已处理」。
-  - **多终端竞争（design D2）**：请求带 `locationDirectory`（来源 `form.created` 事件顶层的 `location.directory`，经 `PendingItem.locationDirectory` 透传），TUI 按「位置匹配（主）→ 会话持有（次，`data.session.sync` 后 `get`）→ 不匹配即静默」过滤；兜底为先到先得 + 已结算静默（`FormAlreadySettledError` 的 `_tag`）。实测 3 终端在线仅归属方投递。
-  - **⚠️ 事件会重放**：同一 `events.request` 载荷会被订阅方反复收到，所以消费方必须幂等（`inFlight` 集合 + 已结算静默）。
-  - **前提与边界**：应答由**终端侧**执行 —— 没有终端客户端运行时无法从手机应答（超时如实告知）；纯后台 `opencode run` 无终端，其无头提问被宿主自行 dismiss，插件管不到。
-  - **Effect 错误渲染**：`String(e)` 会退化成 `[object Object]`，取错误信息须用 `tui.ts` 的 `describeError`（读 `_tag`/`message`/JSON）。
-  - 失败路径一律**不静默**：回执写明原因且令牌保留可重试（既有「执行成功才消费令牌」约定不变，`control/` 层零改动）。
-- **远程控制经 `OpencodeBridge` 窄接口调宿主**（不再自建 SDK client）：`index.ts` 用 ctx 实现 `replyPermission`/`replyForm`/`prompt`/`interrupt` 四个方法注入 `ControlController`，`control/` 层不直接依赖 opencode 类型包。V1 时代"从注入 client 提取 fetch/headers 自建 v2 client（`buildV2Client`）"那套**已删除**（V2 ctx 直接给域，也不再有 `_input.serverUrl` 死地址问题）。
-- **⚠️ `permission.reply` 受「实例 location」门控 → 必须路由到会话所属 location 的实例**（change `route-permission-reply-by-location`）：宿主只接受「实例 location == 会话所属目录」的调用，否则报 `Permission request not found`。而单例选出的 owner 可能属于任意 location（打开别的项目、`run --standalone` 都会改变），故**不能**用「当前活动实例」直接应答。
-  - 机制：新增进程级**实例注册表** `control/instance-registry.ts`（会合点 `globalThis.__opencodeNotifyInstances__`）。每个实例 `setup` 时登记自己的**最小能力**（**只有 `replyPermission`，勿暴露完整 ctx** —— 暴露 ctx 等于让任意实例对任意 location 调用全部宿主能力，破坏 location 隔离），cleanup 时 `unregister`（**归属校验**，避免旧实例卸载误删新登记）。owner 收到命令后：解析会话 location → `getInstanceByLocation` → 调目标实例的 `replyPermission`。
-  - 路由依据：`PendingItem.locationDirectory`，来源是 **`permission.asked` 事件顶层**的 `location.directory`（⚠️ `data` 内**没有**位置字段）；缺失时用 `ctx.session.get({sessionID})` 兜底 —— 实测 `session.get` **不受** location 门控，可读其它目录的会话。
-  - 失败原因分化（勿合并措辞）：目标无实例 → `PermissionTargetNotOpenError`「该会话所在项目未打开终端，请先打开该项目后重试」；宿主报 not found → `PermissionAlreadySettledError`「该请求已被处理或已取消」；其余原样抛出。**三者都保留令牌**（既有"成功才消费"逻辑）。
-  - 与 form 的对比（**机制相反，勿混**）：form 按 `formID` 在**客户端侧**定位、**不受** location 门控；permission 按**实例 location** 门控、须服务端路由。详表见 `doc/v2-plugin-form-mechanism.md` 第 8.9 节。
-  - 边界：跨进程仍隔离（注册表在 `globalThis`，每进程独立）；实测独立进程的登记表**只含自己**。
-- **opencode V2 插件 API 约定**（`@opencode/plugin@2.x`）：入口是 `export default Plugin.define({ id, async setup(ctx) { … return cleanup } })`，`Cleanup = () => Promise<void> | void`；事件订阅用 `ctx.event.subscribe({ signal })` 返回 `AsyncIterable<Event>`，cleanup 里 `AbortController.abort()` 退出循环。**V2 把事件的 `properties` 统一改名为 `data`**（`events.ts` 的 `V2Event` 就是这个形状）。`ctx.permission.reply` 增了必填 `sessionID`、`reply` 改名为 `decision`（`once`/`always`/`reject`）；`session.abort` 改名为 `session.interrupt`；`session.prompt` 的 `parts` 数组改为扁平 `text`。**已消失的 V1 事件**：`message.part.updated`、`message.updated`、`question.*`、`session.updated`、`command.executed`、`session.error`、`permission.updated`。助手输出采集换源为 `session.text.delta`（**增量** `data.delta`，按 `assistantMessageID` 分桶，`session-tracker.appendAssistantText` 本身就是追加式，无需改）；用户输入采集换源为 `session.inbox.enqueued`（`data.item.type==="user"` → `data.item.payload.text`）；`session.updated` 拆成 `session.created`（**扁平**载荷，`data.parentID`/`data.title`，不再是 `data.info.*`）与 `session.renamed`；`run_failed`/`run_cancelled` 改用原生 `session.execution.failed`（`data.error.message`）/ `session.execution.interrupted`（`data.reason` ∈ user/shutdown/superseded/inactivity，**只 `user` 通知**，见上）。
-- **一次性令牌格式为 `oc-<实例4位>-<随机6位>`，跨模块耦合**：`control/tokens.ts`（生成/正则）→ `control/runtime-state.ts`（**进程级**实例前缀来源）→ `control/pending.ts`（注册表：permission/form 一次性消费，**session 型 TTL 内可复用**）→ `control/parser.ts`（凭证强制语法，见下）→ `control/controller.ts`（凭证门卫：无归属/无效一律静默）。改令牌格式必须同步这 5 处。
-- **`PendingRegistry.add()` 是幂等的**（同 `requestID` 复用既有令牌、只刷标题/选项/TTL）——opencode 会对同一事件连发多次，若轮换令牌，首条通知发给用户的令牌会立刻失效（真机 bug，commit `b9ad788`）。form 的 `answerKey`/`optionValues` 也在这条幂等分支里同步刷新，改动时勿漏。
-- **凭证强制协议（用户明确要求，勿回退）**：所有命令必须携带令牌（`approve <令牌>` / `answer <令牌> <文本>` / `select <令牌> <数字|文字>`（数字=选第 n 个选项，任意文字=按自由回答处理）/ `say <令牌> <文本>` / `stop <令牌>` / `status <令牌>`；无动词简写已废除——所有命令必须有明确动词）。**无令牌 / 令牌无效 / 令牌异主 / 已消费 / 过期 → 完全静默**（不执行、不回执，仅日志）；`execute` 对 kind 不匹配的动作返回 null（静默）。`status` 验证不消费；完成类通知注册 `session` 型凭证（TTL 内可反复 say/stop）。会话码 `sc-xxxx` **已彻底下线**（`control/sessions.ts` 整类已删、`genSessionCode` 已删），只余 `tokens.ts:SESSION_CODE_RE` 供 `isRef` 识别旧引用形态（随后被令牌校验判为无效并静默丢弃）。
-- **执行成功才消费令牌**：`approve/always/deny/answer/choose` 统一走 `callBridge()`，失败时**保留令牌**（TTL 内可重试）并在回执写明原因（超时/无终端、宿主已结算等）；成功才 `removeByCode`。⚠️ `select <令牌> <文字>` 在 `parser.finalize` 就分流成 `answer` 动作（与 `select <令牌> <数字>` → `choose` 不同），所以 `controller.execute` 的 `case "answer"` 覆盖了「用 select 回自由文本」这条路径。勿改成"失败也消费"。
-- **多实例/多机安全**：令牌含实例前缀 → 异主命令"查无此证"静默；这是砍掉裸数字/裸 say 换来的安全性，勿以"便捷"为由回退。
-- **⚠️ 隔离粒度是「server 进程」而不是「插件实例」**：实例前缀与待处理注册表**都取自进程级共享状态**（`control/runtime-state.ts`，会合点 `globalThis.__opencodeNotifyControlState__`）。**同一 server 进程内所有 location 实例共用同一前缀与同一份注册表** —— 因为宿主每个 location 各加载一份实例、单例只在其中选一个 owner，若前缀/注册表是实例私有的，owner 一变（打开新项目、热重载）先前发出的令牌就全部作废且被**静默丢弃**（真机 bug，change `share-control-state-process-wide`）。共享**不影响跨进程/跨机隔离**：`globalThis` 每进程独立，故多个 `opencode server`（`serve --port` / `run --standalone`）之间前缀天然不同（实测：主进程 `8e11`，独立进程 `8505`）。**写侧约束：只有 owner 会写注册表**（`index.ts` 的 `finishNotification` 有 `isActive()` 闸门，在所有 `registerPending` 之前），命令通道也只有 owner 在跑 —— 共享注册表不会让"本应隔离的两份控制逻辑"互相干扰；改这里前先确认该约束仍成立。
-- **注册表配置变更靠指纹重建**：`getControlState()` 以 `token_ttl_ms`+`max_pending` 为指纹；指纹变化才按新参数重建，并**先快照再恢复**（不丢已发出的令牌），最后由 `PendingRegistry.restore()` **显式裁剪一次**（`add()` 的裁剪只在 push 后触发，迁移不走 `add`，故 max 调小必须显式裁）。因会合点在 `globalThis` 跨热重载存活，指纹未变时直接复用既有注册表。⚠️ 已知语义：`token_ttl_ms` 变更会影响**存量**条目的过期判定（变大可能让原本过期的"复活"，变小则立即过期）。
-- **ntfy 通知按钮**：`senders/ntfy.ts`（`NtfyNotifySender`）把 `Message.controlButtons` 渲染成 ntfy `Actions` 头，按钮的 `http` 动作 POST 回 `reply.command_topic` 形成闭环。通知 `topic` 必须 ≠ `reply.command_topic`（`config.ts` `resolveReplyConfig` 有回环校验，相同则禁用按钮并告警）。Actions 值含 `,;"'` 时必须加引号。
-- **远程控制配置挂在渠道下**：`channels.ntfy.reply` / `channels.gotify.reply`（无顶层 `control` 块）。`config.ts` 的 `resolveReplyConfig` 产出 `ReplyConfig`；`index.ts` 取 `cfg.channels.ntfy?.reply ?? cfg.channels.gotify?.reply`（二者互斥，只启动一个命令通道）。
-- **ntfy 命令读取默认流式**：`reply.transport` 默认 `stream`（`control/ntfy-stream.ts` 长连接订阅 `GET .../json`，keepalive 45s、看门狗 120s、断线带 `since=<最后message id>` 重连、400 则重置游标、消息去重）；`transport: poll` 走 `control/ntfy.ts` 的 `NtfyPollProvider`（原轮询实现，保留兜底）。工厂在 `controller.ts` 的 `createProvider()`。两者共用 `control/ntfy-common.ts`（认证头/URL/回执发布）。**游标只按 `event=message` 的 id 推进**（`open`/`keepalive` 的 id 不在缓存，用作 `since` 会触发整段缓存重放）。
-- **ntfy 默认合并单话题**：`reply.command_topic` **省略** → `commandTopic = topic`（`merged=true`），插件订阅自己发布的话题。发布的通知/回执都带 `tags:[reply.bot_tag]`（默认 `opencode`），provider 在**解析命令之前**按 `isBotMessage()` 过滤自身消息防回环（`ntfy-stream.ts` / `ntfy.ts`）。填写 `command_topic` → 分离双话题（旧行为），此时 `copyButton` 强制 false。
-- **通知按钮编排（ntfy 服务端硬限每条 ≤3 个 action，`action.go:actionsMax=3`，改需自编译服务端，勿依赖 >3）**：权限=[允许][始终允许][拒绝]（http）；提问 ≤2 选项=[选项][选项][复制]；提问 ≥3 选项或 0 选项=[复制]（≥3 时正文列 `1 … 2 …` 供 `select <令牌> N` 回复）；完成类=[复制续接命令][状态]。`ControlButton` 用 `body`（http）或 `value`（copy）二选一，渲染在 `senders/ntfy.ts:buildActions`。提问的 `copy` value 是 `select <令牌> `、完成类是 `say <令牌> `（均**带尾空格**，粘贴后直接补正文）。
-- **显式回复协议（不猜）**：**动词开头**按动词（`approve/always/deny/answer/select/say/stop/status/help`）；无动词简写已废除，`parseCommand("2")` 报「未知动词: 2」；**其它无动词文本解析失败** → `controller.onRawMessage` 记 info 并静默丢弃（凭证强制协议下不刷回执，语法帮助由通知正文的「回复:」提示行承担）。选项选择只有 `select <令牌> <数字>` 一个入口，由 `controller.execute` 校验越界/无选项。
-- **⚠️ `body.replace()` 的替换串带变量插值时一律用函数形式**（`(m) => …`）：字符串形式会解释 `$&`/`$` `` `` `/$'`/`$$`，而 `userPrompt`、`sessionTopic`、`inputLine` 来自用户与模型（含 `$` 很常见），命中就是正文被撑爆/内容错乱。现有 3 处：`message.ts:enrich` 两处 + `index.ts` form 分支一处。
-- **⚠️ 提问正文里 `fields[i].title/description`、`options[].label/description` 有展示长度上限**（200/100/30/80，`index.ts:clampDisplay`）——ntfy 消息硬限 4095 字节，超限直接 500 → **通知彻底丢失**。截断只发生在拼正文那一步；`options`/`optionValues`/`optionDescs` 三个数组**必须原样**（按钮标签与提交给宿主的回传值靠它们，且三者长度恒等是硬约定）。
-- **⚠️ 选项编号不带 `#`**：正文写 `**1 红色**` 而不是 `**#1 红色**`。回复语法是 `select <令牌> N`，`#1` 会诱导用户敲出 `parser` 的 `/^\d+$/` 不匹配的 `#1` → 被当自由回答提交给宿主并消费令牌（静默错答）。
-- **`custom_webhook` 是命名多配置**：形如 `custom_webhook: { my_slack: { mode, url, ... } }`；旧的单对象写法仍兼容（`normalizeCustomWebhooks` 归一到 key `custom_webhook`）。`buildSenders` 遍历注册，渠道名即用户自定义名。
-- **子会话（background task）只通知 `permission_required`**：其余事件（含 `run_completed`/`run_failed`/`run_cancelled`）一律静默（`index.ts:220-224`，commit `b4e4183` 改前曾是"仅 fail 仍通知"）。
-- **事件路由**：`events.ts:route()` 把 opencode 事件映射为内部 `Message`；`message.ts` 负责格式化（`formatBody`/`enrich`）；`index.ts` 组装发送器和会话追踪。
-- **⚠️ 每 location 一份插件实例 → 必须走 `process-singleton.ts` 收敛**：opencode 2.x **每个 location（项目目录）各加载一份插件实例**，而 `ctx.event.subscribe` 收到的是 server 级公共事件流（**没有 location 维度**），所以同一个事件会被 N 份实例各处理一次 —— 一次事件发 N 条重复通知，外加 N 条 ntfy 长连接、N 套延迟推送。这是宿主设计不是 bug。收敛靠 `process-singleton.ts`：会合点是 `globalThis.__opencodeNotifyRuntime__`（**模块级状态不可用** —— 实测同一 entrypoint 在同进程被求值为 N 份独立模块；`ctx.storage` 也按 location 隔离）。**只有活动实例**订阅事件 + 发通知 + 跑命令通道，其余实例完全空闲。选举规则是**最新注册者直接夺权**，不是"首个上位 + teardown 交接"——后者依赖宿主每次重载都调 cleanup，有例外时第一个实例会永远占着 owner 导致改配置/改代码不生效。改动这里务必同步 `index.ts` 的 `activate`/`deactivate` 与 `finishNotification` 开头的 `isActive()` 闸门。日志判据：`单例: 本实例已上位` / `已让位` / `插件卸载`。
-- **⚠️ 跨进程去重靠 `store.ts` 的 O_EXCL 按键占位**：单例只覆盖「一个 server 进程」。同时跑多个 `opencode server` 时各进程 `lastSent` 互不可见，同一通知仍会发多遍。做法是每个去重 key 建一个占位文件，`open(path,"wx")`（`O_CREAT|O_EXCL`，OS 级原子）抢发送权，拿到 `EEXIST` 即判重复；占位 mtime 即窗口起点，过期可被后来者删除抢占。**三个坑**：① 占位文件必须写 owner token，`clearReservation` 释放前校验归属，否则会误删已被别人抢占的占位、毁掉其去重保证；② 占位创建失败（目录不可写等）**记 error 后照常发送** —— 去重是防噪音优化，送达是主功能，宁可重复也不能不响；③ 占位文件保留 24h，`pruneClaims()` 在 `FileStore` 构造时懒清理。
-- 不要删除/改动仓库根目录的 `config.json`（那是本仓库的 opencode agent 模型配置，已被 gitignore，非插件配置）。
-- 插件配置是 YAML，模板见 `opencode-notify.yaml.example`，运行时配置在 `~/.config/opencode/opencode-notify.yaml`。优先级：YAML > plugin options > 默认值。
-- **⚠️ 部署坑：opencode 2.x 的 `plugin` 数组不再接受 `file://` 单文件，必须写目录**。V1 时代的 `"file:///…/opencode-notify/index.ts"` 在 2.x 下**只会打一条 `configured plugin path must be a directory` 的 WARN 然后静默跳过 —— 插件根本不加载，所有通知/远程控制全部失效，且没有任何报错**。正确写法是去掉文件名、指向插件目录（宿主按 `package.json` 的 `main`/`exports` 解析入口，本仓库两者都已具备）。判定方法：`~/.local/share/opencode/log/opencode.log` 里搜 `msg="loading plugin" id=…opencode-notify` —— **没有这行就是没加载**（WARN 不能作为判据，`~/.config/opencode/plugins/*.ts` 里的文件同样会 WARN 但通过自动扫描正常加载）。改完必须重启 `opencode serve` 才生效（插件只在 server 启动时加载）。
-- **⚠️ 冷重启会重放「未结算」的 permission/form 通知 —— 这是宿主行为，勿当插件 bug 排查（已定论，勿重复考证）**：升级 opencode 或 server 进程重启后，手机会收到一批几小时前/几天前的陈旧权限与提问通知。**根因不是"事件未清理"**（实测 `~/.local/share/opencode/opencode.db` 的 `event` 表 **0 条**、`session_pending` **0 条**；`event_sequence` 908 条只是游标，`permission` 46 条是 `psv_*` 项目授权规则、不是待处理请求）。真实机制：permission/form 在宿主侧是**有状态聚合**，只有被结算（用户 `approve/deny/reply`，或宿主因会话结束/删除/dismiss 主动结算）才消失；插件在 server 重启后**重新订阅**时，宿主会把**当前所有仍未结算的请求**重新广播一次以"恢复现场"，避免正在等待处理的请求凭空消失。这是**每次冷重启都会重发的状态重放，不是历史事件积压**。实测（2026-09-30）：09:32 升级 2.0.19→2.0.20 冷重启重放 7 条，09:51 server 再次冷重启重放 2 条 —— **条数逐次递减（宿主逐步结算）但只要还有未结算的就每次都重来**。用户侧彻底解法是处理掉/中断那些会话让宿主结算。**插件侧刻意不过滤**：`permission.asked`/`form.created` 载荷里**没有请求创建时间戳**，无法区分"重放的旧请求"与"刚产生的新请求"，任何基于猜测的过滤都可能**误杀真实新权限请求**（如启动瞬间正好有新请求）。若将来要加，判据只能是"冷启动宽限期（实测重放发生在订阅后 5～45s 内）+ 陈旧阈值（建议 ≥10 分钟）"，且只能作用于 `permission_required`，不得动 `run_*`（终态事件本就有状态机过滤）；`process-singleton.ts` 的 `getRuntime()` 里 `existing` 为 undefined 分支天然是冷启动信号，但**仅凭它不足以判断事件新旧**。用户向说明见 README「已知行为」章节。
-- `config.ts` 里 `resolveConfig/mergeConfig/loadYamlConfig` 的合并逻辑是配置行为的核心。
+- **import 写 `.js`，文件其实是 `.ts`**：`"type": "module"` + `moduleResolution: bundler`，全库如此，不要"修正"。
+- **"输出"长度由两处共同决定**：`session-tracker.ts`（`BUCKET_MAX_BYTES=3072` 累积并从头部截断、`freezeAssistantSummary` 冻结）→ `message.ts:138`（`shortTitle(assistantSummary, 500)`）。**"输入"另走一路**：`index.ts:285` 源头 `slice(0, 1000)`，`message.ts` 里标题取 16 字、正文取 80 字。
+- ⚠️ **`body.replace()` 的替换串带变量插值时必须用函数形式** `(m) => …`：字符串形式会解释 `$&`/`` $` ``/`$'`/`$$`，而输入来自用户与模型（含 `$` 很常见），命中就是正文被撑爆/串行。现存函数形式：`message.ts:134,142`、`index.ts:446,450`（`index.ts:453` 也是字符串形式，但无插值，安全）。
+- **`text-format.ts` 是正文分渠道改写的公共件**：`stripInlineBold` / `bodyWithReplyHint` / `clampBodyBytes(3600)`（**保尾**令牌行，UTF-8 不切半个字符）。即时与延迟两条发送路径都各自调用，新增渠道别绕过。
+- **同一份 `msg.body` 到各渠道会被改写，勿只看 ntfy**：ntfy `markdown:true` + 唯一渲染 Actions；企业微信 markdown；飞书 `escapeMarkdown` **故意不转义 `*`**（否则整张卡片都是 `\*\*事件：\*\*`），`` ` ``/`_`/`#`/`]` 仍转义；gotify/custom-webhook 去粗体；`system_message` **只发 事件/会话/时间/输入/输出 五行**（白名单正则在 `senders/system/index.ts`，加正文行要同步这里）；`screen_flash` 完全忽略正文。
+- ⚠️ **提问正文的展示字段有长度上限**（`index.ts` 的 `clampDisplay`：title 100 / description 200 / label 30 / desc 80）——ntfy 硬限 4095 字节，超限直接 500 → **通知彻底丢失**。截断只发生在拼正文；`options`/`optionValues`/`optionDescs` 三个数组**必须原样且等长**（按下标取回传值，错位就提交错答案；提交用 `optionValues[i]`，不能是 label）。
+- ⚠️ **正文选项编号不带 `#`**（写 `**1 红色**`）：回复语法是 `select <令牌> N`，`#1` 不匹配 `/^\d+$/`，会被当自由回答提交并消费令牌 → 静默错答。
+- **`form.created` 的真实结构**（实测 2.0.19）：`form.title` 恒为占位 `"Questions"`，真问题在 `fields[i].title`、补充说明在 `fields[i].description`、选项在 `fields[i].options[j]`；`formID = data.form.id`，**会话 ID 在 `data.form.sessionID`**（不在 `data.sessionID`），`location.directory` 在**事件顶层**。事件被映射成 `permission_required`，要区分权限/提问只能看原始 `type`。
+- **`run_completed` 不在 `events.ts` 生成**，由 `index.ts` 会话状态机合成（`session.idle`/`session.status(idle)` + `hasActiveChildren()`）。**已定论，勿再考证**：原生 `session.execution.succeeded` 按单 session 结算、不等子会话，不能替代。
+- **`run_cancelled` 只对 `reason === "user"` 通知**（`events.ts` 的 `NOTIFIABLE_INTERRUPT_REASONS`），`shutdown`/`superseded`/`inactivity` 静默且**绝不降级成 `run_failed`**。
+- **子会话（background task，有 parentID）只通知 `permission_required`**，完成/失败/取消全静默（`index.ts` 的 `finishNotification` 开头）。
+
+## 远程控制（凭证强制协议，用户明确要求，勿回退）
+
+- 命令只有：`approve/deny/always <令牌>`、`answer <令牌> <文本>`、`select <令牌> <数字|文本>`、`say <令牌> <文本>`、`stop <令牌>`、`status <令牌>`、`help`。**无动词简写已废除**。
+- **无令牌 / 无效 / 异主（前缀不符） / 已消费 / 过期 → 完全静默**（仅写日志，不回执）；`execute` 对 kind 不匹配返回 `null` 静默。语法帮助由通知正文的 `replyHint` 行承担，**不要加"语法提示回执"**（会自激）。
+- **执行成功才消费令牌**：`approve/always/deny/answer/choose` 走 `callBridge()`，失败保留令牌（TTL 内可重试）并在回执里写明原因；`status` 验证不消费；完成类注册 `session` 型凭证（TTL 内可反复 say/stop）。`PendingRegistry.add()` **幂等**（同 `requestID` 复用令牌，只刷标题/选项/TTL）——opencode 会对同一事件连发多次，轮换令牌会让用户手里的令牌立刻失效。
+- `select` 是唯一的选择入口，在 `parser.finalize` 分流：纯数字 → `choose`，其它文字 → `answer`（所以 `execute` 的 `case "answer"` 也覆盖了"用 select 回自由文本"）。选项越界/无选项在 `controller.execute` 校验。
+- **令牌 `oc-<inst4>-<rand6>` 跨 5 处耦合**：`control/tokens.ts`（生成/正则）→ `runtime-state.ts`（实例前缀）→ `pending.ts`（注册表）→ `parser.ts`（凭证语法）→ `controller.ts`（门卫）。改格式必须同步。
+- **隔离粒度是「server 进程」不是「插件实例」**：实例前缀与注册表都在 `globalThis.__opencodeNotifyControlState__`（每 location 一份实例，owner 变了不能让令牌作废）。**只有 owner 写注册表**（`finishNotification` 开头的 `isActive()` 闸门在所有 `registerPending` 之前）。配置变更靠 `token_ttl_ms`+`max_pending` 指纹重建，重建后 `restore()` **显式裁剪一次**。
+- **`permission.reply` 受「实例 location」门控**（否则报 `Permission request not found`）→ owner 经 `control/instance-registry.ts`（会合点 `globalThis.__opencodeNotifyInstances__`）把应答交给会话所属 location 的实例。注册表**只登记 `replyPermission`**，别暴露完整 ctx。路由依据 `PendingItem.locationDirectory`（来自事件顶层 `location.directory`，缺失用 `ctx.session.get` 兜底——它不受 location 门控）。
+- **三种失败措辞不要合并**：目标无实例 → `PermissionTargetNotOpenError`；宿主 not found → `PermissionAlreadySettledError`；其余原样抛。三者都保留令牌。
+- **提问（form）应答走 `tui.ts`**：服务端 ctx **没有** form 域，`form.reply` 只在 TUI/CLI 插件上下文。链路 `手机 → index.ts → RPC(form-reply-rpc.ts) → tui.ts → form.reply → methods.confirm → index.ts`。要点：
+  - RPC 注册**按 location 作用域**，**每个实例都要注册自己那份**（放单例 `activate` 之外）；等待表必须放 `globalThis.__opencodeNotifyFormReplyWaiters__`。
+  - **必须等 `confirm`**（默认 5s，`form_reply_timeout_ms`）：`ok:true` 才消费；`ok:false`/超时 → 抛错、回执原因、**保留令牌**。区分"没人处理"与"已处理"只能靠确认。
+  - **事件会重放** → 消费方必须幂等（`inFlight` + 已结算静默）。Effect 错误 `String(e)` 是 `[object Object]`，用 `tui.ts` 的 `describeError`。
+  - permission 与 form 机制**相反勿混**：permission 按实例 location 门控需服务端路由；form 按 `formID` 在客户端侧定位。详表见 `doc/v2-plugin-form-mechanism.md` 第 8.9 节（改 form 前先读该文档）。
+
+## ntfy / Gotify 通道
+
+- `reply` 配置挂在**渠道下**（`channels.ntfy.reply` / `channels.gotify.reply`），无顶层 `control` 块；二者互斥，`index.ts` 只启动一个命令通道。
+- **默认合并单话题**：省略 `reply.command_topic` → 命令话题 = 通知话题，靠 `tags:[bot_tag]` 的 `isSelfMessage()` 在**解析命令之前**过滤自身消息防回环。填了 `command_topic` → 分离双话题，`copy_button` 强制 false。
+- 命令读取默认 `stream`（`control/ntfy-stream.ts` 长连接：keepalive 45s、看门狗 120s、断线带 `since=<最后 message id>`、400 重置游标、401/403 熔断）；`poll` 走 `control/ntfy.ts`。**游标只按 `event=message` 的 id 推进**（`open`/`keepalive` 的 id 不在缓存，用作 `since` 会整段重放）。
+- 按钮编排（ntfy 服务端硬限每条 **≤3 个 action**，`senders/ntfy.ts:buildActions`）：权限 `[允许][始终允许][拒绝]`；提问 ≤2 选项 `[选项][选项][复制]`，0 或 ≥3 选项仅 `[复制]`（正文列编号）；完成类 `[复制续接命令][状态]`。`copy` 的 value 是 `select <令牌> ` / `say <令牌> `（**带尾空格**）。
+- 回执有内建限流（10s / 8 条），超限丢弃并告警——自激的最后一道防线，别顺手删。
+- `custom_webhook` 是**命名多配置**（`custom_webhook: { my_slack: {…} }`），旧单对象写法仍兼容（归一成 key `custom_webhook`）。
+
+## 进程 / 多实例
+
+- **每个 location 各加载一份插件实例**，而事件流是 server 级公共流 → 必须靠 `process-singleton.ts` 收敛：只有 owner 订阅事件、发通知、跑命令通道。会合点是 `globalThis.__opencodeNotifyRuntime__`（模块级状态实测不共享，`ctx.storage` 也按 location 隔离）。选举规则是**最新注册者直接夺权**（不是"首个上位 + teardown 交接"）。改这里同步 `index.ts` 的 `activate/deactivate` 与 `finishNotification` 的 `isActive()` 闸门。日志判据：`单例: 本实例已上位` / `已让位` / `插件卸载`。
+- **跨进程去重靠 `store.ts` 的 O_EXCL 按键占位**（`open(path,"wx")`）：① 占位文件写 owner token，`clearReservation` 释放前校验归属；② 占位创建失败**记 error 后照常发送**（送达优先于去重）；③ 占位保留 24h，构造时 `pruneClaims()` 懒清理。
+
+## 部署与配置
+
+- ⚠️ **opencode 2.x 的 `plugin` 数组必须是目录，不接受 `file://` 单文件**：写文件路径只会打一条 `configured plugin path must be a directory` 的 WARN 然后**静默跳过**（插件完全不加载、无报错）。改完必须重启 `opencode serve`。
+  判定是否加载：`~/.local/share/opencode/log/opencode.log` 里有 `msg="loading plugin" id=…opencode-notify`；插件自己的日志里是 `插件已加载`。
+  （`doc/install.md` 里仍写着 `file://…/index.ts` 的本地写法，是过时的，别照抄。）
+- 运行时配置在 `~/.config/opencode/opencode-notify.yaml`（首次启动自动生成），模板见 `opencode-notify.yaml.example`。
+- 配置优先级 **YAML > plugin options > 默认值**（`config.ts` 的 `loadYamlConfig`/`mergeConfig`/`resolveConfig`）。`mergeConfig` 按渠道逐字段合并、`reply` 子块单独合并，但 `events` 是**整体替换**不是拼接。
+- **新增配置项要同步 3 处**：`config.ts` 的 `DEFAULT_CONFIG_TEMPLATE`（首次运行生成用）、`opencode-notify.yaml.example`、README「配置参考」。
+- `channels.*.mode`：`all`（即时，延迟另由 `remote_delay_channels` 决定）/ `delay_only`（仅延迟）/ `none`。
+- 不要改仓库根目录的 `config.json`（gitignored，是本仓库 opencode agent 模型配置，不是插件配置）。
+- 平台依赖：`system_message` 在 Linux 走 gdbus→notify-send、Windows/macOS 各有实现；`screen_flash` 仅 Linux（python3 + PyGObject/GTK3）与 Windows（PowerShell + WinForms），macOS 静默忽略；`terminator-detect` 需 `TERMINATOR_UUID`（结果 5s TTL 缓存，避免高频 `execSync`）。
+- ⚠️ **跑马灯在 Wayland 下要强制走 X11 后端**：GTK3 的 Wayland 后端不支持 override-redirect 顶层覆盖层，窗口能创建但**用户看不见**。`senders/screen-flash/linux.ts` 的 `resolveEnv()` 在 `WAYLAND_DISPLAY` 且 `DISPLAY` 有值时设 `GDK_BACKEND=x11`（走 XWayland）——**别删这个判断**，否则跑马灯在 Wayland 会话静默失效。脚本侧另有 `get_primary_monitor()` 返回 None 的回退（Wayland 无 primary monitor 概念，不回退会 `AttributeError` 秒退）。
 
 ## 架构速览
 
 ```
-process-singleton.ts (进程级单例：每 location 一实例 → 只留最新注册者 active)
+index.ts (服务端入口, exports ".")  events.ts route() → message.ts enrich/format
+  │                                  → dispatcher(即时) / delayed-dispatcher(延迟)
+  │                                  → senders/{system,screen-flash,wechat-work,feishu,ntfy,gotify,custom-webhook}
+  ├─ process-singleton.ts  每 location 一实例 → 只留最新注册者 active
+  ├─ control/             手机 → 插件 → 宿主（全出站，无监听端口）
+  │   controller.ts (命令执行/凭证门卫/按钮编排) ← OpencodeBridge 窄接口（index.ts 用 ctx 实现）
+  │   parser.ts · pending.ts · tokens.ts · runtime-state.ts · instance-registry.ts
+  │   ntfy-common.ts · ntfy-stream.ts(默认) · ntfy.ts(poll) · gotify.ts · poll-loop.ts
+  └─ form-reply-bridge.ts   服务端侧派发/等确认（等待表在 globalThis）
 
-index.ts (服务端插件入口, exports ".") → events.ts route() → message.ts enrich/format
-       ↓
-dispatcher.ts (即时) + delayed-dispatcher.ts (远程延迟)
-       ↓ 两条路径各自经 text-format.ts 的 clampBodyBytes（3600 字节，保尾的令牌行）
-senders/ 各渠道：system(跨平台原生，只发 事件/会话/时间/输入/输出 五行) / screen-flash(X11跑马灯，忽略正文) / wechat-work / feishu / ntfy(带按钮) / gotify / custom-webhook(命名多配置)
-
-control/ (手机 → 插件 → opencode 应答，仅出站连接；配置在 channels.*.reply)
-  controller.ts (命令执行 + 令牌隔离 + 按钮编排 + 凭证门卫)
-    ↑ 经 OpencodeBridge 调用宿主（index.ts 用 ctx 实现并注入，control/ 不依赖 opencode 类型包）
-    ├─ pending.ts (一次性令牌注册表，add() 幂等) / tokens.ts (令牌生成与格式)
-    ├─ parser.ts (命令解析：动词 + 令牌；select 数字→choose / 文字→answer)
-    ├─ runtime-state.ts (进程级：实例前缀 + 注册表 + 配置指纹)
-    ├─ instance-registry.ts (进程级：location → 实例的 replyPermission，供授权应答按 location 路由)
-    └─ ntfy-common.ts (tags/认证头/URL/回执) + ntfy-stream.ts (默认长连接) / ntfy.ts (poll 兜底) / gotify.ts (轮询；与 senders/ 同名文件不同：这里读命令，那里发通知)
-
-⚠️ permission 应答按 location 路由：宿主门控「实例 location == 会话所属目录」，
-   故 owner 经 instance-registry 找目标 location 的实例代答（form 则相反，见 tui.ts）
-
-tui.ts (TUI/CLI 插件入口, exports "./tui"，由 CLI 自动加载，跑在终端进程)
-  ↑ 服务端 form 应答的唯一通道：form-reply-rpc.ts (契约, 两端共用) + form-reply-bridge.ts (服务端侧派发/等确认)
-    手机应答提问：ntfy → index.ts → RPC events.request → tui.ts → form.reply → methods.confirm → index.ts
+tui.ts (exports "./tui", 由 CLI 自动加载, 跑在终端进程)
+  form-reply-rpc.ts 契约（两端共用同一 definition 对象，各写一份会静默失配）
+  手机应答提问: ntfy → index.ts → RPC → tui.ts → form.reply → confirm → index.ts
 ```
 
-- `text-format.ts`：正文分渠道改写的公共件 —— `stripInlineBold`（去字面 `**`，给纯文本渠道） / `bodyWithReplyHint`（把 `replyHint` 追加到正文，除 ntfy 外各渠道都用） / `clampBodyBytes`（3600 字节兜底，**保尾**的令牌行，UTF-8 字节不切半个字符）。
-- **多渠道正文渲染分治**（同一份 `msg.body` 到各渠道会被改写，勿只看 ntfy）：ntfy `markdown: true` 保留粗体 + 唯一渲染 Actions 按钮；企业微信 `msgtype: markdown` 保留粗体；飞书 `escapeMarkdown` **故意不转义 `*`**（转义后整张卡片全是 `\*\*事件：\*\*`），但 `` ` `` `_` `#` `]` 仍转义；gotify / custom-webhook `stripInlineBold`；**system_message 只发 `事件/会话/时间/输入/输出` 五行**（原生横幅短、OS 会截断，令牌/选项/回复提示一律不进 —— 新增正文 key 行时要同步 `senders/system/index.ts` 的白名单正则）；screen_flash 完全忽略正文。
-- `session-tracker.ts`：会话活跃/空闲追踪、用户输入与助手回复累积，驱动抑制与延迟推送取消。
-- `terminator-detect.ts`：Terminator 子屏遮挡检测（需 `TERMINATOR_UUID` 环境变量，检测结果 5s TTL 缓存防高频 `execSync`）。
-- `store.ts`：文件持久化去重（1s 防抖写盘）+ 跨进程 O_EXCL 按键占位（见下）。
-- 所有对外 HTTP 请求（wechat-work / feishu / custom-webhook / cli test）均已加 AbortController 超时；平台发送器用的 `execSync` 多数带 `timeout`。
+- `events.ts:route()` 只做事件 → `Message` 映射；`session.idle`/`session.status(idle)` 不进 route，由 `index.ts` 状态机处理。
+- `session-tracker.ts`：会话活跃/空闲、父子关系、用户输入与助手增量累积（驱动抑制与延迟推送取消）。
+- V1 的 `message.part.updated`/`message.updated`/`question.*`/`session.updated`/`command.executed`/`session.error`/`permission.updated` 在 2.x **已不存在**；采集改用 `session.text.delta`（增量）、`session.inbox.enqueued`、`session.created`（扁平载荷）/`session.renamed`。
 
-## 说明
+## 文档与规划产物
 
-- 主要在 Ubuntu 24.04 (X11) 测试；`screen-flash` 仅 Linux X11（Python GTK3）。改平台相关代码注意其余平台（`senders/system/{darwin,win32}.ts`）。
-- 文档在 `doc/`（features / install / notify-format-test / **v2-plugin-form-mechanism**（2.x form 应答机制与实证，改 form 相关代码前先读））。
-- 仓库根目录的 `plan.md` / `task_plan.md` / `progress.md` / `findings.md` 是会话规划产物（planning-with-files），非项目文档，不要当作参考资料或打包进发布。
+- `doc/features.md`（功能细节）、`doc/install.md`（安装/平台依赖，注意上面说的 file:// 过时处）、`doc/notify-format-test.md`（各渠道渲染样例）、`doc/v2-plugin-form-mechanism.md`（2.x form 应答机制与实证，改 form 前必读）。
+- `openspec/`：spec-driven 变更（`openspec/config.yaml` 要求产出用 zh-CN，SHALL/MUST 保留英文）；流程入口在 `.opencode/commands/opsx-*.md`。已归档 3 个 change。
+- 根目录 `plan.md` / `task_plan.md` / `progress.md` / `findings.md` 与 `.planning/` 是 planning-with-files 会话产物（已 gitignore），**不是项目文档**，别当参考资料、别打包。`test-*.ts` 也是 gitignore 的临时脚本。
+- 提交信息用中文、conventional 前缀（`fix(通知):` / `docs(readme):` / `chore:`），一次提交聚焦一件事。
