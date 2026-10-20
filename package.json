@@ -1,6 +1,6 @@
 {
   "name": "@freely01/opencode-notify",
-  "version": "0.8.2",
+  "version": "1.0.0",
   "description": "opencode 通知插件 - 监听会话事件并通过多渠道推送通知",
   "type": "module",
   "main": "index.ts",
@@ -14,6 +14,7 @@
   },
   "files": [
     "*.ts",
+    "control/",
     "senders/",
     "scripts/linux-marquee.py",
     "!scripts/*.ts",
@@ -40,12 +41,12 @@
     "access": "public"
   },
   "devDependencies": {
-    "@opencode/plugin": "^2.0.18",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.9.1",
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@opencode/plugin": "^2.0.18",
     "js-yaml": "^4.1.1"
   }
 }
